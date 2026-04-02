@@ -1,0 +1,56 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: simulyn
+      POSTGRES_PASSWORD: simulyn
+      POSTGRES_DB: simulyn
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simulyn -d simulyn"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  ai:
+    build:
+      context: ./ai-service
+    ports:
+      - "8000:8000"
+
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "5000:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Default: Host=db;Port=5432;Database=simulyn;Username=simulyn;Password=simulyn
+      Jwt__Key: "Simulyn-Dev-Jwt-Signing-Key-Replace-In-Production-Min32Chars!!"
+      Jwt__Issuer: Simulyn.Api
+      Jwt__Audience: Simulyn.Clients
+      Jwt__ExpiryMinutes: "10080"
+      PlatformAdminEmails: "devadmin@example.com"
+      AiService__BaseUrl: http://ai:8000
+      Frontend__Origin: http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      ai:
+        condition: service_started
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:5000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
