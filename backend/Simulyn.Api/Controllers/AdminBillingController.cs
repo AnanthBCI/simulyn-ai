@@ -15,50 +15,53 @@ public class AdminBillingController(AppDbContext db, BillingService billing) : C
 {
     private bool IsPlatformAdmin() => BillingService.IsPlatformAdminClaim(User.FindFirstValue(ClaimTypes.Role));
 
-    [HttpGet("users")]
-    public async Task<ActionResult<IEnumerable<AdminUserDto>>> Users(CancellationToken ct)
+    [HttpGet("organizations")]
+    public async Task<ActionResult<IEnumerable<AdminOrgDto>>> Organizations(CancellationToken ct)
     {
         if (!IsPlatformAdmin()) return Forbid();
 
-        var users = await db.Users.AsNoTracking().ToListAsync(ct);
-        var list = new List<AdminUserDto>();
-        foreach (var u in users)
-        {
-            var entitled = await billing.IsEntitledAsync(u.Id, ct);
-            list.Add(new AdminUserDto(
-                u.Id,
-                u.Name,
-                u.Email,
-                u.Plan,
-                u.SubscriptionStatus,
-                u.SubscriptionExpiresAt,
-                entitled));
-        }
+        var orgs = await db.Organizations.AsNoTracking().ToListAsync(ct);
+        var memberCounts = await db.OrganizationMembers
+            .GroupBy(m => m.OrganizationId)
+            .Select(g => new { OrgId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.OrgId, x => x.Count, ct);
+        var projectCounts = await db.Projects
+            .GroupBy(p => p.OrganizationId)
+            .Select(g => new { OrgId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.OrgId, x => x.Count, ct);
 
-        return Ok(list.OrderBy(x => x.Email));
+        var list = new List<AdminOrgDto>();
+        foreach (var o in orgs)
+        {
+            var entitled = await billing.IsEntitledAsync(o.Id, ct);
+            list.Add(new AdminOrgDto(
+                o.Id, o.Name, o.Plan, o.SubscriptionStatus, o.SubscriptionExpiresAt, entitled,
+                memberCounts.TryGetValue(o.Id, out var m) ? m : 0,
+                projectCounts.TryGetValue(o.Id, out var p) ? p : 0));
+        }
+        return Ok(list.OrderBy(x => x.Name));
     }
 
-    [HttpPost("users/{userId:guid}/subscription")]
+    [HttpPost("organizations/{organizationId:guid}/subscription")]
     public async Task<IActionResult> UpdateSubscription(
-        Guid userId,
+        Guid organizationId,
         [FromBody] SubscriptionUpdateRequest req,
         CancellationToken ct)
     {
         if (!IsPlatformAdmin()) return Forbid();
 
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
-        if (user == null) return NotFound();
+        var org = await db.Organizations.FirstOrDefaultAsync(o => o.Id == organizationId, ct);
+        if (org == null) return NotFound();
 
-        user.Plan = string.IsNullOrWhiteSpace(req.Plan) ? user.Plan : req.Plan.Trim();
-        user.SubscriptionStatus = string.IsNullOrWhiteSpace(req.SubscriptionStatus) ? user.SubscriptionStatus : req.SubscriptionStatus.Trim();
-        user.SubscriptionExpiresAt = req.SubscriptionExpiresAt;
-        user.BillingNotes = string.IsNullOrWhiteSpace(req.BillingNotes) ? user.BillingNotes : req.BillingNotes;
+        org.Plan = string.IsNullOrWhiteSpace(req.Plan) ? org.Plan : req.Plan.Trim();
+        org.SubscriptionStatus = string.IsNullOrWhiteSpace(req.SubscriptionStatus) ? org.SubscriptionStatus : req.SubscriptionStatus.Trim();
+        org.SubscriptionExpiresAt = req.SubscriptionExpiresAt;
+        org.BillingNotes = string.IsNullOrWhiteSpace(req.BillingNotes) ? org.BillingNotes : req.BillingNotes;
 
-        if (user.SubscriptionActivatedAt == null && !string.Equals(user.SubscriptionStatus, "Inactive", StringComparison.OrdinalIgnoreCase))
-            user.SubscriptionActivatedAt = DateTime.UtcNow;
+        if (org.SubscriptionActivatedAt == null && !string.Equals(org.SubscriptionStatus, "Inactive", StringComparison.OrdinalIgnoreCase))
+            org.SubscriptionActivatedAt = DateTime.UtcNow;
 
         await db.SaveChangesAsync(ct);
         return NoContent();
     }
 }
-

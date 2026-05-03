@@ -1,29 +1,54 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
+/** Direct URL for downloading the Excel import template (anonymous endpoint). */
+export function importTemplateUrl(): string {
+  return `${API_BASE}/api/projects/import-template`;
+}
+
+const TOKEN_KEY = "simulyn_token";
+const ORG_KEY = "simulyn_active_org";
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("simulyn_token");
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string) {
-  localStorage.setItem("simulyn_token", token);
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
-  localStorage.removeItem("simulyn_token");
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(ORG_KEY);
+}
+
+export function getActiveOrgId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(ORG_KEY);
+}
+
+export function setActiveOrgId(orgId: string | null) {
+  if (orgId) localStorage.setItem(ORG_KEY, orgId);
+  else localStorage.removeItem(ORG_KEY);
+  // Notify the rest of the app (Nav, switcher) that org changed.
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("simulyn:org-changed"));
+  }
 }
 
 async function request<T>(
   path: string,
   options: RequestInit & { auth?: boolean } = {}
 ): Promise<T> {
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(options.headers as object),
+    ...((options.headers as Record<string, string>) ?? {}),
   };
   if (options.auth !== false) {
     const t = getToken();
-    if (t) (headers as Record<string, string>)["Authorization"] = `Bearer ${t}`;
+    if (t) headers["Authorization"] = `Bearer ${t}`;
+    const orgId = getActiveOrgId();
+    if (orgId) headers["X-Organization-Id"] = orgId;
   }
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) {
@@ -34,31 +59,115 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+export type InvitePreview = {
+  email: string;
+  organizationName: string;
+  role: string;
+  expiresAt: string;
+};
+
+export type BudgetStatus = {
+  todayMills: number;
+  softCapMills: number;
+  hardCapMills: number;
+  level: "Ok" | "Warning" | "Blocked";
+};
+
 export const api = {
   login: (email: string, password: string) =>
     request<{ token: string; userId: string; name: string; email: string }>(
       "/api/auth/login",
       { method: "POST", body: JSON.stringify({ email, password }), auth: false }
     ),
-  register: (name: string, email: string, password: string) =>
+  register: (name: string, email: string, password: string, inviteToken?: string) =>
     request<{ token: string; userId: string; name: string; email: string }>(
       "/api/auth/register",
-      { method: "POST", body: JSON.stringify({ name, email, password }), auth: false }
+      {
+        method: "POST",
+        body: JSON.stringify({ name, email, password, inviteToken }),
+        auth: false,
+      },
     ),
-  projects: () =>
-    request<ProjectDto[]>("/api/projects"),
-  project: (id: string) =>
-    request<ProjectDto>(`/api/projects/${id}`),
+  requestPasswordReset: (email: string) =>
+    request<{ status: string }>("/api/auth/request-password-reset", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+      auth: false,
+    }),
+  resetPassword: (token: string, password: string) =>
+    request<{ status: string }>("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+      auth: false,
+    }),
+  invitePreview: (token: string) =>
+    request<InvitePreview>(
+      `/api/auth/invite-preview?token=${encodeURIComponent(token)}`,
+      { auth: false },
+    ),
+
+  // Billing / budget
+  getBudget: () => request<BudgetStatus>("/api/billing/budget"),
+  createCheckoutSession: (plan: string) =>
+    request<{ sessionId: string; url: string }>("/api/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+
+  // Organizations
+  myOrganizations: () => request<OrganizationDto[]>("/api/organizations"),
+  createOrganization: (name: string) =>
+    request<OrganizationDto>("/api/organizations", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateOrganization: (id: string, name: string) =>
+    request<void>(`/api/organizations/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  deleteOrganization: (id: string) =>
+    request<void>(`/api/organizations/${id}`, { method: "DELETE" }),
+  organizationMembers: (id: string) =>
+    request<OrganizationMemberDto[]>(`/api/organizations/${id}/members`),
+  addOrganizationMember: (id: string, email: string, role: string) =>
+    request<OrganizationMemberDto>(`/api/organizations/${id}/members`, {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    }),
+  updateMemberRole: (id: string, userId: string, role: string) =>
+    request<void>(`/api/organizations/${id}/members/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify({ role }),
+    }),
+  removeMember: (id: string, userId: string) =>
+    request<void>(`/api/organizations/${id}/members/${userId}`, { method: "DELETE" }),
+
+  // Projects / tasks (org-scoped via X-Organization-Id header)
+  projects: () => request<ProjectDto[]>("/api/projects"),
+  project: (id: string) => request<ProjectDto>(`/api/projects/${id}`),
   createProject: (body: CreateProjectBody) =>
     request<ProjectDto>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
+  updateProject: (id: string, body: Partial<CreateProjectBody>) =>
+    request<ProjectDto>(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteProject: (id: string) =>
     request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+  createSampleProject: () =>
+    request<ProjectDto>("/api/projects/sample", { method: "POST" }),
+  createSampleBundle: () =>
+    request<ProjectDto[]>("/api/projects/sample-bundle", { method: "POST" }),
+  projectBrief: (id: string, refresh = false) =>
+    request<ProjectBriefDto>(
+      `/api/projects/${id}/brief${refresh ? "?refresh=true" : ""}`,
+    ),
   tasks: (projectId: string) =>
     request<TaskDto[]>(`/api/tasks/project/${projectId}`),
   createTask: (body: CreateTaskBody) =>
     request<TaskDto>("/api/tasks", { method: "POST", body: JSON.stringify(body) }),
   updateTask: (id: string, body: Partial<CreateTaskBody>) =>
     request<TaskDto>(`/api/tasks/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteTask: (id: string) =>
+    request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
   runPrediction: (body: { taskId?: string; projectId?: string }) =>
     request<PredictionResult[]>("/api/predictions/run", {
       method: "POST",
@@ -69,24 +178,57 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  dashboardSummary: () =>
-    request<DashboardSummary>("/api/dashboard/summary"),
-  alerts: () =>
-    request<AlertItem[]>("/api/dashboard/alerts"),
-  me: () => request<MeDto>("/api/me"),
-  adminUsers: () => request<AdminUserDto[]>("/api/admin/users"),
-  adminUpdateSubscription: (userId: string, body: SubscriptionUpdateBody) =>
-    request<void>(`/api/admin/users/${userId}/subscription`, {
+  runScenario: (body: RunScenarioBody) =>
+    request<SimulationResult>("/api/simulation", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  compareScenarios: (body: CompareScenariosBody) =>
+    request<CompareScenariosResponse>("/api/simulation/compare", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  autoSuggestScenarios: (projectId: string) =>
+    request<AutoSuggestResponse>(
+      `/api/simulation/auto-suggest?projectId=${encodeURIComponent(projectId)}`,
+      { method: "POST" },
+    ),
+  dashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
+  alerts: () => request<AlertItem[]>("/api/dashboard/alerts"),
+  insights: (limit = 5) => request<InsightItem[]>(`/api/dashboard/insights?limit=${limit}`),
+  riskTrend: (days = 30) =>
+    request<RiskTrendPoint[]>(`/api/dashboard/risk-trend?days=${days}`),
+  weeklyRecap: (refresh = false) =>
+    request<WeeklyRecapDto>(
+      `/api/dashboard/weekly-recap${refresh ? "?refresh=true" : ""}`,
+    ),
+  me: () => request<MeDto>("/api/me"),
+
+  // Platform admin
+  adminOrganizations: () => request<AdminOrgDto[]>("/api/admin/organizations"),
+  adminUpdateOrgSubscription: (orgId: string, body: SubscriptionUpdateBody) =>
+    request<void>(`/api/admin/organizations/${orgId}/subscription`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  chat: (body: { message: string; history?: ChatMessage[] }) =>
+    request<ChatReply>("/api/chat", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   importSchedule: async (projectId: string, file: File): Promise<ImportScheduleResult> => {
     const t = getToken();
+    const orgId = getActiveOrgId();
     const fd = new FormData();
     fd.append("file", file);
+    const headers: Record<string, string> = {};
+    if (t) headers["Authorization"] = `Bearer ${t}`;
+    if (orgId) headers["X-Organization-Id"] = orgId;
     const res = await fetch(`${API_BASE}/api/projects/${projectId}/import-schedule`, {
       method: "POST",
-      headers: t ? { Authorization: `Bearer ${t}` } : {},
+      headers,
       body: fd,
     });
     if (!res.ok) {
@@ -96,6 +238,8 @@ export const api = {
     return res.json() as Promise<ImportScheduleResult>;
   },
 };
+
+// ----- Types -----
 
 export type ProjectDto = {
   id: string;
@@ -124,6 +268,13 @@ export type TaskDto = {
   status: string;
   latestRisk?: string | null;
   latestDelayDays?: number | null;
+  latestSummary?: string | null;
+  latestRecommendation?: string | null;
+  latestPredictionAt?: string | null;
+  /** Risk level from the prediction run just before the latest (null on first run). */
+  previousRisk?: string | null;
+  previousDelayDays?: number | null;
+  previousPredictionAt?: string | null;
 };
 
 export type CreateTaskBody = {
@@ -133,6 +284,18 @@ export type CreateTaskBody = {
   endDate: string;
   progress: number;
   status?: string;
+};
+
+/** One-glance AI project health brief — powers the ProjectHealthBrief widget. */
+export type ProjectBriefDto = {
+  projectId: string;
+  headline: string;
+  body: string;
+  healthScore: number;
+  toneTags: string[];
+  createdAt: string;
+  /** True when the cached copy was returned because the AI service was unreachable. */
+  isStale: boolean;
 };
 
 export type PredictionResult = {
@@ -152,39 +315,171 @@ export type SimulationResult = {
   predictedDelay: number;
   impactSummary?: string | null;
   createdAt: string;
+  scenarioType: string;
+  headline?: string | null;
+  scenarioConfigJson?: string | null;
+};
+
+/** One of the five supported scenario types. Keep in sync with ScenarioTypes.cs. */
+export type ScenarioType =
+  | "UniformSlip"
+  | "SingleTaskSlip"
+  | "AddResource"
+  | "WeatherPause"
+  | "ScopeReduction";
+
+export const SCENARIO_TYPES: ScenarioType[] = [
+  "UniformSlip",
+  "SingleTaskSlip",
+  "AddResource",
+  "WeatherPause",
+  "ScopeReduction",
+];
+
+export const SCENARIO_LABEL: Record<ScenarioType, string> = {
+  UniformSlip: "Uniform slip",
+  SingleTaskSlip: "Single task slip",
+  AddResource: "Add resource",
+  WeatherPause: "Weather pause",
+  ScopeReduction: "Scope reduction",
+};
+
+export type ScenarioConfig =
+  | { InputDelayDays: number }
+  | { TaskId: string; DelayDays: number }
+  | { CapacityMultiplier: number }
+  | { PauseDays: number }
+  | { TasksRemoved: number };
+
+export type RunScenarioBody = {
+  projectId: string;
+  scenarioType: ScenarioType;
+  config: ScenarioConfig;
+};
+
+export type CompareScenariosBody = {
+  projectId: string;
+  scenarios: RunScenarioBody[];
+};
+
+export type CompareScenariosResponse = {
+  projectId: string;
+  results: SimulationResult[];
+};
+
+export type SuggestedScenario = {
+  scenarioType: ScenarioType;
+  label: string;
+  rationale: string;
+  /** Raw config object as returned by the AI — shape matches ScenarioConfig. */
+  config: Record<string, unknown>;
+};
+
+export type AutoSuggestResponse = {
+  projectId: string;
+  suggestions: SuggestedScenario[];
 };
 
 export type DashboardSummary = {
   totalProjects: number;
   highRiskTasks: number;
   openAlerts: number;
+  lowRiskTasks: number;
+  mediumRiskTasks: number;
+  unpredictedTasks: number;
+};
+
+export type InsightItem = {
+  taskId: string;
+  taskName: string;
+  projectId: string;
+  projectName: string;
+  riskLevel: string;
+  delayDays: number;
+  summary?: string | null;
+  recommendation?: string | null;
+  createdAt: string;
+};
+
+/** One day of historical risk counts. Powers the dashboard "Risk trend" chart. */
+export type RiskTrendPoint = {
+  date: string;
+  highRiskTasks: number;
+  mediumRiskTasks: number;
+  lowRiskTasks: number;
+};
+
+/** AI-generated weekly recap shown at the top of the dashboard. */
+export type WeeklyRecapDto = {
+  headline: string;
+  bullets: string[];
+  generatedAt: string;
+  /** True when returned via deterministic fallback (AI service unreachable). */
+  isStale: boolean;
 };
 
 export type AlertItem = {
   type: string;
+  /** Legacy combined message (taskName + reason). Kept for back-compat. */
   message: string;
   projectId?: string | null;
   taskId?: string | null;
   riskLevel: string;
   createdAt: string;
+  taskName?: string | null;
+  projectName?: string | null;
+  /** AI-generated plain-English reason for the alert. */
+  reason?: string | null;
+  /** AI-generated recommended actions (plain text with bullets). */
+  recommendation?: string | null;
+  delayDays?: number | null;
+  /** Deterministic math behind the risk call — rendered in the "Why?" tooltip. */
+  whySignal?: string | null;
 };
 
 export type MeDto = {
   userId: string;
+  name: string;
+  email: string;
+  isPlatformAdmin: boolean;
+  activeOrganizationId?: string | null;
+  activeOrganizationName?: string | null;
+  activeOrganizationRole?: string | null;
   plan: string;
   subscriptionStatus: string;
   subscriptionExpiresAt?: string | null;
   isEntitled: boolean;
 };
 
-export type AdminUserDto = {
-  userId: string;
+export type OrganizationDto = {
+  id: string;
   name: string;
-  email: string;
   plan: string;
   subscriptionStatus: string;
   subscriptionExpiresAt?: string | null;
   isEntitled: boolean;
+  myRole: string;
+  memberCount: number;
+  projectCount: number;
+};
+
+export type OrganizationMemberDto = {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  joinedAt: string;
+};
+
+export type AdminOrgDto = {
+  organizationId: string;
+  name: string;
+  plan: string;
+  subscriptionStatus: string;
+  subscriptionExpiresAt?: string | null;
+  isEntitled: boolean;
+  memberCount: number;
+  projectCount: number;
 };
 
 export type SubscriptionUpdateBody = {
@@ -199,3 +494,51 @@ export type ImportScheduleResult = {
   rowsSkipped: number;
   messages: string[];
 };
+
+// ----- Chat copilot -----
+
+/**
+ * One turn in the chat copilot history. Mirrors the backend ChatMessageDto and
+ * the OpenAI message shape so it round-trips cleanly through the AI service.
+ *
+ * `tool` and assistant-with-tool_calls turns are produced by the orchestrator
+ * server-side and surfaced in `usedTools`; the frontend only persists `user`
+ * and final-answer `assistant` turns to localStorage.
+ */
+export type ChatMessage = {
+  role: "user" | "assistant" | "system" | "tool";
+  content: string | null;
+  toolCalls?: ChatToolCall[] | null;
+  toolCallId?: string | null;
+  name?: string | null;
+};
+
+export type ChatToolCall = {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+export type ChatUsedTool = {
+  name: string;
+  arguments?: Record<string, unknown> | null;
+};
+
+export type ChatReply = {
+  reply: string;
+  usedTools: ChatUsedTool[];
+  detectedLanguage?: string | null;
+  provider: string;
+  iterationCount: number;
+  truncated: boolean;
+};
+
+export const ROLES = ["Owner", "Admin", "Member", "Viewer"] as const;
+export type Role = (typeof ROLES)[number];
+
+export function canManageMembers(role: string | null | undefined) {
+  return role === "Owner" || role === "Admin";
+}
+export function canWrite(role: string | null | undefined) {
+  return role === "Owner" || role === "Admin" || role === "Member";
+}

@@ -1,0 +1,132 @@
+# Production Docker Compose for Simulyn.
+#
+# Usage (on a Linux VPS with docker + docker compose plugin):
+#   cd /opt/simulyn
+#   git clone https://github.com/<you>/simulyn-ai.git .
+#   cp deploy/.env.prod.example deploy/.env.prod
+#   # edit deploy/.env.prod with your real secrets (domain, Groq key, DB password, etc.)
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
+#
+# Stack:
+#   caddy   : single ingress point, auto-HTTPS via Let's Encrypt, reverse-proxies to api/web
+#   web     : Next.js frontend (Simulyn UI)
+#   api     : .NET 8 backend (business logic + auth + billing)
+#   ai      : Python FastAPI AI service (LLM orchestration)
+#   db      : PostgreSQL 16 with persistent volume
+#
+# All services except caddy bind only to the internal Docker network. Only the
+# caddy container is reachable from the internet (ports 80/443 on the host).
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # TLS certs (do not delete this volume!)
+      - caddy_config:/config
+    environment:
+      SIMULYN_DOMAIN: ${SIMULYN_DOMAIN:?SIMULYN_DOMAIN is required, e.g. simulyn.ai}
+      SIMULYN_API_DOMAIN: ${SIMULYN_API_DOMAIN:?SIMULYN_API_DOMAIN is required, e.g. api.simulyn.ai}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required (used by Let's Encrypt for expiry notices)}
+    depends_on:
+      - web
+      - api
+    networks:
+      - simulyn
+
+  web:
+    build:
+      context: ../frontend
+      args:
+        # The browser calls the API via the public api subdomain.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required, e.g. https://api.simulyn.ai}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    networks:
+      - simulyn
+
+  api:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Default: Host=db;Port=5432;Database=simulyn;Username=simulyn;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Jwt__Key: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required (>= 32 chars, generate with: openssl rand -base64 48)}
+      Jwt__Issuer: Simulyn.Api
+      Jwt__Audience: Simulyn.Clients
+      Jwt__ExpiryMinutes: "10080"
+      PlatformAdminEmails: ${PLATFORM_ADMIN_EMAILS:?PLATFORM_ADMIN_EMAILS is required, e.g. you@yourdomain.com}
+      AiService__BaseUrl: http://ai:8000
+      # Browser origin(s), comma-separated. Used for CORS. Must be https in prod.
+      Frontend__Origin: https://${SIMULYN_DOMAIN}
+      # Optional integrations — leave unset if not configured, the app falls back.
+      Resend__ApiKey: ${RESEND_API_KEY:-}
+      Resend__FromAddress: ${RESEND_FROM_ADDRESS:-}
+      Resend__AppUrl: https://${SIMULYN_DOMAIN}
+      Sentry__Dsn: ${SENTRY_DSN_BACKEND:-}
+      Budget__DailyLlmUsdSoft: ${BUDGET_DAILY_LLM_USD_SOFT:-1}
+      Budget__DailyLlmUsdHard: ${BUDGET_DAILY_LLM_USD_HARD:-2}
+      Stripe__ApiKey: ${STRIPE_API_KEY:-}
+      Stripe__WebhookSecret: ${STRIPE_WEBHOOK_SECRET:-}
+      Stripe__TeamPriceId: ${STRIPE_TEAM_PRICE_ID:-}
+      Stripe__BusinessPriceId: ${STRIPE_BUSINESS_PRICE_ID:-}
+      Stripe__SuccessUrl: https://${SIMULYN_DOMAIN}/admin/billing?checkout=success
+      Stripe__CancelUrl: https://${SIMULYN_DOMAIN}/admin/billing?checkout=cancel
+    depends_on:
+      db:
+        condition: service_healthy
+      ai:
+        condition: service_started
+    networks:
+      - simulyn
+
+  ai:
+    build:
+      context: ../ai-service
+    restart: unless-stopped
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required (Groq/DeepSeek/OpenAI — whichever provider)}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-latest}
+      LLM_TIMEOUT_SECS: ${LLM_TIMEOUT_SECS:-15}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-350}
+      CHAT_MAX_TOKENS: ${CHAT_MAX_TOKENS:-1500}
+    networks:
+      - simulyn
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: simulyn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: simulyn
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U simulyn -d simulyn"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - simulyn
+
+networks:
+  simulyn:
+    driver: bridge
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

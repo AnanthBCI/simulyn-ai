@@ -1,8 +1,6 @@
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Simulyn.Api.Data;
+using Microsoft.AspNetCore.RateLimiting;
 using Simulyn.Api.Models.Dtos;
 using Simulyn.Api.Models.Entities;
 using Simulyn.Api.Services;
@@ -12,98 +10,52 @@ namespace Simulyn.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]
-public class PredictionsController(AppDbContext db, AiClientService ai, BillingService billing) : ControllerBase
+[EnableRateLimiting("predictions")]
+public class PredictionsController(
+    PredictionService predictions,
+    BillingService billing,
+    BudgetGuard budget,
+    UsageService usage,
+    OrganizationContext orgContext) : ControllerBase
 {
-    private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
     [HttpPost("run")]
-    public async Task<ActionResult<IEnumerable<PredictionResultDto>>> Run([FromBody] RunPredictionRequest req, CancellationToken ct)
+    public async Task<ActionResult<IEnumerable<PredictionResultDto>>> Run(
+        [FromBody] RunPredictionRequest req,
+        CancellationToken ct)
     {
-        if (!await billing.IsEntitledAsync(UserId, ct))
-            return StatusCode(402, "Subscription required. Contact sales for an invoice plan.");
+        var (orgId, forbidden) = await orgContext.RequireOrgAsync(ct);
+        if (forbidden != null) return forbidden;
+        var roleErr = await orgContext.RequireRoleAsync(OrgRoles.Member, ct);
+        if (roleErr != null) return roleErr;
+
+        if (!await billing.IsEntitledAsync(orgId!.Value, ct))
+            return StatusCode(402, "Subscription required for this organization. Contact sales for an invoice plan.");
+
+        var budgetStatus = await budget.CheckAsync(orgId.Value, ct);
+        if (budgetStatus.IsBlocked)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                $"Daily AI budget reached (${budgetStatus.HardCapUsd:0.00}). Predictions will resume after UTC midnight or when an Admin raises the cap.");
 
         if (req.TaskId is null && req.ProjectId is null)
             return BadRequest("Provide taskId or projectId.");
 
-        List<ProjectTask> tasks;
         if (req.TaskId is not null)
         {
-            var t = await db.Tasks
-                .Include(x => x.Project)
-                .FirstOrDefaultAsync(x => x.Id == req.TaskId, ct);
-            if (t == null || t.Project.UserId != UserId) return NotFound();
-            tasks = [t];
-        }
-        else
-        {
-            var project = await db.Projects
-                .Include(p => p.Tasks)
-                .FirstOrDefaultAsync(p => p.Id == req.ProjectId && p.UserId == UserId, ct);
-            if (project == null) return NotFound();
-            tasks = project.Tasks.ToList();
+            var p = await predictions.RunForTaskAsync(req.TaskId.Value, orgId.Value, ct);
+            if (p is null) return NotFound();
+            await usage.RecordAsync(orgId.Value, null, UsageEventKinds.Prediction, UsageService.PredictionCostMills, ct: ct);
+            return Ok(new[]
+            {
+                new PredictionResultDto(p.Id, p.TaskId, p.RiskLevel, p.DelayDays, p.Summary, p.Recommendation, p.CreatedAt),
+            });
         }
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var results = new List<PredictionResultDto>();
+        var results = await predictions.RunForProjectAsync(req.ProjectId!.Value, orgId.Value, ct);
+        if (results.Count == 0) return NotFound();
 
-        foreach (var task in tasks)
-        {
-            var project = await db.Projects.AsNoTracking().FirstAsync(p => p.Id == task.ProjectId, ct);
-            var aiReq = new AiPredictRequest(
-                task.Id.ToString(),
-                task.Name,
-                task.StartDate.ToString("yyyy-MM-dd"),
-                task.EndDate.ToString("yyyy-MM-dd"),
-                task.Progress,
-                project.StartDate.ToString("yyyy-MM-dd"),
-                project.EndDate.ToString("yyyy-MM-dd"));
+        await usage.RecordAsync(orgId.Value, null, UsageEventKinds.Prediction, UsageService.PredictionCostMills * results.Count, ct: ct);
 
-            AiPredictResponse? aiRes = null;
-            try
-            {
-                aiRes = await ai.PredictAsync(aiReq, ct);
-            }
-            catch
-            {
-                /* fallback */
-            }
-
-            string risk;
-            int delay;
-            string summary;
-            string recommendation;
-            if (aiRes != null)
-            {
-                risk = aiRes.RiskLevel;
-                delay = aiRes.DelayDays;
-                summary = aiRes.Summary;
-                recommendation = aiRes.Recommendation;
-            }
-            else
-            {
-                var local = RuleBasedPrediction.Evaluate(task.StartDate, task.EndDate, task.Progress, today);
-                risk = local.RiskLevel;
-                delay = local.DelayDays;
-                summary = local.Summary;
-                recommendation = local.Recommendation;
-            }
-
-            var row = new Prediction
-            {
-                Id = Guid.NewGuid(),
-                TaskId = task.Id,
-                RiskLevel = risk,
-                DelayDays = delay,
-                Summary = summary,
-                Recommendation = recommendation,
-                CreatedAt = DateTime.UtcNow
-            };
-            db.Predictions.Add(row);
-            await db.SaveChangesAsync(ct);
-
-            results.Add(new PredictionResultDto(row.Id, row.TaskId, row.RiskLevel, row.DelayDays, row.Summary, row.Recommendation, row.CreatedAt));
-        }
-
-        return Ok(results);
+        return Ok(results.Select(p =>
+            new PredictionResultDto(p.Id, p.TaskId, p.RiskLevel, p.DelayDays, p.Summary, p.Recommendation, p.CreatedAt)));
     }
 }

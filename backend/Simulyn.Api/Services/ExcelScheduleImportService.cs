@@ -23,11 +23,11 @@ public class ExcelScheduleImportService(AppDbContext db)
 
     public async Task<ImportScheduleResultDto> ImportAsync(
         Guid projectId,
-        Guid userId,
+        Guid organizationId,
         Stream excelStream,
         CancellationToken ct = default)
     {
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId, ct);
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == projectId && p.OrganizationId == organizationId, ct);
         if (project == null)
             throw new InvalidOperationException("Project not found.");
 
@@ -125,6 +125,115 @@ public class ExcelScheduleImportService(AppDbContext db)
 
         messages.Insert(0, $"Imported {created} task(s); skipped {skipped} row(s).");
         return new ImportScheduleResultDto(created, skipped, messages);
+    }
+
+    /// <summary>
+    /// Builds a starter .xlsx workbook the user can download, fill in, and re-upload.
+    /// Sheet 1: a "Schedule" sheet with the four expected columns and ~8 realistic
+    /// construction tasks dated relative to today, so it doubles as a quick demo.
+    /// Sheet 2: an "Instructions" sheet listing the header aliases the importer accepts.
+    /// </summary>
+    public static byte[] BuildTemplate()
+    {
+        using var workbook = new XLWorkbook();
+        BuildScheduleSheet(workbook);
+        BuildInstructionsSheet(workbook);
+
+        using var ms = new MemoryStream();
+        workbook.SaveAs(ms);
+        return ms.ToArray();
+    }
+
+    private static void BuildScheduleSheet(XLWorkbook workbook)
+    {
+        var sheet = workbook.Worksheets.Add("Schedule");
+
+        // Headers
+        sheet.Cell(1, 1).Value = "Task Name";
+        sheet.Cell(1, 2).Value = "Start Date";
+        sheet.Cell(1, 3).Value = "End Date";
+        sheet.Cell(1, 4).Value = "Progress";
+
+        var headerRange = sheet.Range(1, 1, 1, 4);
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#1f2937");
+        headerRange.Style.Font.FontColor = XLColor.White;
+        headerRange.Style.Border.BottomBorder = XLBorderStyleValues.Medium;
+
+        // Sample rows — a realistic 8-task construction project starting today.
+        // Mix of completed / in-progress / not-started so AI predictions show variety.
+        var today = DateTime.Today;
+        var samples = new (string name, int startOffset, int durationDays, int progress)[]
+        {
+            ("Site mobilization & temporary facilities", -45, 14, 100),
+            ("Excavation & shoring",                    -30, 21,  90),
+            ("Foundation pour — mat slab",              -10, 18,  60),
+            ("Structural steel erection — L1-L4",         5, 30,  10),
+            ("MEP rough-in — L1-L4",                    20, 35,   0),
+            ("Curtain wall installation",               40, 45,   0),
+            ("Interior finishes — L1-L4",               60, 50,   0),
+            ("Final inspections & punch list",         110, 14,   0),
+        };
+
+        var row = 2;
+        foreach (var (name, startOffset, durationDays, progress) in samples)
+        {
+            sheet.Cell(row, 1).Value = name;
+            sheet.Cell(row, 2).Value = today.AddDays(startOffset);
+            sheet.Cell(row, 3).Value = today.AddDays(startOffset + durationDays);
+            sheet.Cell(row, 4).Value = progress;
+
+            sheet.Cell(row, 2).Style.DateFormat.Format = "yyyy-mm-dd";
+            sheet.Cell(row, 3).Style.DateFormat.Format = "yyyy-mm-dd";
+            sheet.Cell(row, 4).Style.NumberFormat.Format = "0\"%\"";
+            row++;
+        }
+
+        sheet.Columns(1, 4).AdjustToContents();
+        sheet.Column(1).Width = Math.Max(sheet.Column(1).Width, 42);
+        sheet.SheetView.FreezeRows(1);
+
+        // Helpful note in row 11
+        sheet.Cell(11, 1).Value = "Replace the example rows above with your own tasks, then upload this file in Simulyn.";
+        sheet.Cell(11, 1).Style.Font.Italic = true;
+        sheet.Cell(11, 1).Style.Font.FontColor = XLColor.FromHtml("#6b7280");
+        sheet.Range(11, 1, 11, 4).Merge();
+    }
+
+    private static void BuildInstructionsSheet(XLWorkbook workbook)
+    {
+        var sheet = workbook.Worksheets.Add("Instructions");
+
+        sheet.Cell(1, 1).Value = "How to use this template";
+        sheet.Cell(1, 1).Style.Font.Bold = true;
+        sheet.Cell(1, 1).Style.Font.FontSize = 14;
+
+        var lines = new[]
+        {
+            "1. Open the 'Schedule' sheet.",
+            "2. Replace the example rows with your own tasks (one task per row).",
+            "3. Save the file (.xlsx) and upload it on the project page in Simulyn.",
+            "",
+            "Accepted column headers — any one of these is recognised:",
+            "",
+            "  Task name:    Task Name, Task, Name, Activity, Description, Title, WBS",
+            "  Start date:   Start, Start Date, Begin, Planned Start, Baseline Start",
+            "  End date:     End, End Date, Finish, Due, Planned Finish, Baseline Finish",
+            "  Progress (%): Progress, %, Percent, Pct, Complete, Completion, % Complete",
+            "",
+            "Column order doesn't matter — the importer looks at the header text in row 1.",
+            "Dates may be Excel date cells or text in yyyy-MM-dd format.",
+            "Progress can be a number 0–100 or a 0–1 decimal (e.g. 0.75 means 75%).",
+            "",
+            "After upload, AI risk predictions run automatically for every imported task.",
+        };
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            sheet.Cell(i + 3, 1).Value = lines[i];
+        }
+
+        sheet.Column(1).Width = 90;
     }
 
     private static string NormalizeHeader(string s) =>

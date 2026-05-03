@@ -1,0 +1,57 @@
+# Caddyfile — production reverse proxy for Simulyn.
+#
+# Caddy auto-provisions TLS via Let's Encrypt (HTTP-01 challenge on :80).
+# Two hostnames: the app (Next.js) and the api (.NET backend).
+#
+# DNS setup: point both SIMULYN_DOMAIN and SIMULYN_API_DOMAIN at the VPS IP
+# (A record each). Wildcards also work if you prefer.
+
+{
+    email {$ACME_EMAIL}
+    # Uncomment the next line for the Let's Encrypt staging environment while
+    # testing (avoids rate limits). Re-comment before going live.
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# -------- Frontend (Next.js) --------
+{$SIMULYN_DOMAIN} {
+    encode gzip zstd
+
+    # Security headers — safe defaults for a SaaS UI.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        # Remove server fingerprint.
+        -Server
+    }
+
+    reverse_proxy web:3000 {
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+# -------- Backend API (.NET) --------
+{$SIMULYN_API_DOMAIN} {
+    encode gzip zstd
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+
+    # /stripe/webhook must receive the raw request body with no buffering for
+    # signature verification to succeed.
+    @stripeWebhook path /api/billing/webhook
+    reverse_proxy @stripeWebhook api:8080 {
+        flush_interval -1
+    }
+
+    reverse_proxy api:8080 {
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

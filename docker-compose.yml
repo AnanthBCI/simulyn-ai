@@ -18,14 +18,49 @@ services:
   ai:
     build:
       context: ./ai-service
+      args:
+        # Build-time proxy so pip can reach pypi.org from behind the corporate
+        # proxy. Defaults rewrite localhost:3128 → host.docker.internal:3128
+        # (containers can't reach the host on "localhost").
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-http://host.docker.internal:3128}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-http://host.docker.internal:3128}
+        NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-host.docker.internal,localhost,127.0.0.1}
     ports:
       - "8000:8000"
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-latest}
+      # Ollama runs on the host machine — reach it via host.docker.internal.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      # Chat copilot needs tool-calling — small models (1B/3B) struggle with it.
+      # llama3.1:8b and qwen2.5:7b are reliable picks. Pull first:
+      #   ollama pull llama3.1:8b
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.1:8b}
+      OLLAMA_TIMEOUT_SECS: ${OLLAMA_TIMEOUT_SECS:-60}
+      LLM_TIMEOUT_SECS: ${LLM_TIMEOUT_SECS:-60}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-350}
+      CHAT_MAX_TOKENS: ${CHAT_MAX_TOKENS:-700}
+      # Make sure the Python LLM clients DO NOT route host.docker.internal
+      # (Ollama) through the corporate proxy at runtime.
+      NO_PROXY: host.docker.internal,localhost,127.0.0.1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   api:
     build:
       context: ./backend
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-http://host.docker.internal:3128}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-http://host.docker.internal:3128}
+        NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-host.docker.internal,localhost,127.0.0.1}
+    # Host port 5000 is taken on this machine, expose on 5050 instead. Keep
+    # in sync with the web service's NEXT_PUBLIC_API_URL build arg below.
     ports:
-      - "5000:8080"
+      - "5050:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Default: Host=db;Port=5432;Database=simulyn;Username=simulyn;Password=simulyn
@@ -35,7 +70,7 @@ services:
       Jwt__ExpiryMinutes: "10080"
       PlatformAdminEmails: "devadmin@example.com"
       AiService__BaseUrl: http://ai:8000
-      Frontend__Origin: http://localhost:3000
+      Frontend__Origin: http://localhost:3001
     depends_on:
       db:
         condition: service_healthy
@@ -46,9 +81,15 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:5000
+        # Baked into the client bundle at build time — must match the host
+        # port the api service is exposed on.
+        NEXT_PUBLIC_API_URL: http://localhost:5050
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-http://host.docker.internal:3128}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-http://host.docker.internal:3128}
+        NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-host.docker.internal,localhost,127.0.0.1}
+    # Host port 3000 is held by another process on this machine, expose 3001.
     ports:
-      - "3000:3000"
+      - "3001:3000"
     depends_on:
       - api
 
