@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FolderKanban, Plus } from "lucide-react";
 import {
   api,
@@ -131,7 +131,10 @@ function ProjectCard({ project }: { project: ProjectDto }) {
   );
 }
 
-export default function ProjectsListPage() {
+// useSearchParams() triggers client-side rendering, which Next's static
+// prerender pass rejects unless it's inside a Suspense boundary. Wrap the
+// real page in Suspense (see default export below).
+function ProjectsListPageInner() {
   usePageTitle("Projects");
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -355,5 +358,13 @@ export default function ProjectsListPage() {
       )}
 
     </div>
+  );
+}
+
+export default function ProjectsListPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-site-muted">Loading projects…</div>}>
+      <ProjectsListPageInner />
+    </Suspense>
   );
 }

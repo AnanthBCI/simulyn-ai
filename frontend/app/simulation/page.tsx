@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Lightbulb, Plus, Wand2, X } from "lucide-react";
 import {
   api,
@@ -81,7 +81,10 @@ function coerceConfig(type: ScenarioType, raw: Record<string, unknown>): Scenari
   }
 }
 
-export default function SimulationPage() {
+// useSearchParams() triggers client-side rendering, which Next's static
+// prerender pass rejects unless it's inside a Suspense boundary. Wrap the
+// real page in Suspense (see default export below).
+function SimulationPageInner() {
   usePageTitle("What-if simulator");
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -469,6 +472,14 @@ export default function SimulationPage() {
         <ComparisonTable results={results} running={running} tasks={tasks} />
       )}
     </div>
+  );
+}
+
+export default function SimulationPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-site-muted">Loading scenarios…</div>}>
+      <SimulationPageInner />
+    </Suspense>
   );
 }
 
