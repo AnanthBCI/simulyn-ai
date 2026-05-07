@@ -572,9 +572,15 @@ See `ai-service/.env.example` for copy-paste env blocks for each recipe.
 
 ## Deploy to the cloud
 
-This section is opinionated: **one recommended path** end-to-end, plus two managed alternatives if you'd rather not touch a VPS.
+Three paths, pick the one that matches where you are right now:
 
-The repo ships a ready-made production setup in `deploy/`:
+| Path | Monthly cost | Cold start | Best for | Section |
+|---|---|---|---|---|
+| **A. Vercel + Render + Neon** | **$0** (free tiers) | ~30s after 15min idle | First demo to stakeholders, design-partner pilots | [Option A below](#option-a--vercel--render--neon-free-tier-recommended-for-first-demo) |
+| **B. Single VPS + Caddy** | $5-10 | None | Full control, your domain, 3+ paying pilots | [Option B below](#option-b--single-vps-with-docker-compose--caddy-self-hosted) |
+| **C. Railway** (all-in-one) | $5-20 | None | One dashboard, no SSH, first real pilot | [Option C below](#option-c--railway-simplest-managed-no-ssh) |
+
+For a VPS deploy, the repo ships a ready-made production setup in `deploy/`:
 
 ```
 deploy/
@@ -583,7 +589,177 @@ deploy/
   .env.prod.example         — every required env var, annotated
 ```
 
-### Option 1 — Single VPS with Docker Compose + Caddy (recommended for pilots)
+### Option A — Vercel + Render + Neon (free-tier, recommended for first demo)
+
+This is the fastest path from `git push` to a public URL you can send a stakeholder — no credit card, no SSH, ~20 minutes total. The architecture:
+
+```
+[ Vercel frontend ] ──► [ Render: Backend API ] ──► [ Neon Postgres ]
+                                   │
+                                   └──► [ Render: AI service ] ──► Groq
+```
+
+**Known limits of the free tier** — fine for demos and design-partner pilots, not for real users:
+
+- Render free web services sleep after 15 min idle → **~30s cold start** on the next request.
+- Neon free tier auto-suspends the DB after 5 min idle → first query adds ~2-5s.
+- Groq free tier: ~14.4k requests/day on 8B-instant, 1k/day on 70B — plenty for a demo.
+
+Total time: ~20 minutes. You'll need a GitHub account (with this repo pushed) and a Groq API key.
+
+#### Step 1 — Create the Neon Postgres database (~3 min)
+
+1. Sign up at [neon.tech](https://neon.tech) (GitHub login, no card).
+2. Create a new project; pick the region closest to where you'll deploy the API (e.g. `ap-southeast-1` for Singapore).
+3. On the project's **Connection Details** page, copy the connection string. It looks like:
+
+   ```
+   postgresql://neondb_owner:npg_xxxxx@ep-abc-123-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+   ```
+
+4. Convert it to Npgsql key=value format (you'll paste this into Render):
+
+   ```
+   Host=ep-abc-123-pooler.ap-southeast-1.aws.neon.tech;Database=neondb;Username=neondb_owner;Password=npg_xxxxx;SSL Mode=Require;Trust Server Certificate=true
+   ```
+
+   Save that somewhere — you'll need it in Step 2.
+
+#### Step 2 — Deploy the Backend API to Render (~8 min)
+
+1. Sign up at [render.com](https://render.com) (GitHub login, no card for free tier).
+2. **New +** → **Web Service** → connect GitHub → select your `simulyn-ai` repo.
+3. Fill the form:
+
+   | Field | Value |
+   |---|---|
+   | Name | `simulyn-api` |
+   | Region | Singapore (same as Neon) |
+   | Branch | `main` |
+   | **Runtime** | **Docker** |
+   | **Dockerfile Path** | `./backend/Dockerfile` |
+   | **Docker Context** | `./backend` |
+   | Instance Type | **Free** |
+   | Health Check Path | `/healthz` |
+
+4. Under **Advanced → Environment Variables**, add these (replace the ⚠️ placeholders with real values — see generation commands at the end of this section):
+
+   ```
+   ConnectionStrings__Default = <the Npgsql-format string from Step 1>
+   Jwt__Key                   = ⚠️ openssl rand -base64 48
+   Jwt__Issuer                = Simulyn.Api
+   Jwt__Audience              = Simulyn.Clients
+   Frontend__Origin           = https://<your-vercel-app>.vercel.app
+   AiService__BaseUrl         = https://simulyn-ai-ai.onrender.com    ⚠️ set in Step 3
+   PlatformAdminEmails        = you@youremail.com
+   ASPNETCORE_ENVIRONMENT     = Production
+   ASPNETCORE_URLS            = http://0.0.0.0:10000
+   ```
+
+5. **Create Web Service** → wait ~5 min for the first build.
+6. Once green, verify: open `https://simulyn-api.onrender.com/healthz` → should return `{"status":"ok","service":"simulyn.api"}`. EF migrations run automatically on first boot, so the DB is now seeded.
+
+> **Multiple Vercel preview URLs?** `Frontend__Origin` accepts a comma-separated list — e.g. `https://simulyn-ai.vercel.app,https://simulyn-ai-git-main-*.vercel.app`. Each value must be an exact origin (no wildcards).
+
+#### Step 3 — Deploy the AI service to Render (~5 min)
+
+Same flow, new Web Service:
+
+| Field | Value |
+|---|---|
+| Name | `simulyn-ai-ai` *(must exactly match `AiService__BaseUrl` in Step 2)* |
+| Runtime | **Docker** |
+| Dockerfile Path | `./ai-service/Dockerfile` |
+| Docker Context | `./ai-service` |
+| Instance Type | **Free** |
+| Health Check Path | `/health` |
+
+Environment variables (Groq config — free, fastest inference):
+
+```
+LLM_PROVIDER       = openai
+OPENAI_API_KEY     = gsk_...your Groq key from console.groq.com
+OPENAI_BASE_URL    = https://api.groq.com/openai/v1
+OPENAI_MODEL       = llama-3.3-70b-versatile
+OPENAI_CHAT_MODEL  = llama-3.1-8b-instant
+LLM_TIMEOUT_SECS   = 15
+LLM_MAX_TOKENS     = 350
+CHAT_MAX_TOKENS    = 1500
+PORT               = 10000
+```
+
+Deploy → verify: `https://simulyn-ai-ai.onrender.com/health` → `{"status":"ok","llm_provider":"openai",...}`.
+
+If you'd rather use OpenAI / Anthropic / DeepSeek, swap the values per the [Hosted-provider recipes](#hosted-provider-recipes) table above.
+
+#### Step 4 — Deploy the frontend to Vercel (~3 min)
+
+1. Sign up at [vercel.com](https://vercel.com) (GitHub login, no card).
+2. **Add New** → **Project** → import `simulyn-ai`.
+3. In the import screen:
+   - **Root Directory** → `frontend`
+   - **Framework Preset** → Next.js (auto-detected)
+   - **Environment Variables**:
+
+     | Name | Value | Environments |
+     |---|---|---|
+     | `NEXT_PUBLIC_API_URL` | `https://simulyn-api.onrender.com` | Production, Preview, Development |
+
+4. **Deploy** → first build takes ~2-3 min.
+5. Vercel hands you `https://<your-app>.vercel.app`. Copy that URL.
+
+#### Step 5 — Close the CORS loop
+
+Go back to Render → `simulyn-api` → **Environment** → edit `Frontend__Origin` to the exact Vercel URL you got in Step 4 (e.g. `https://simulyn-ai.vercel.app`). Save — Render redeploys automatically in ~1 min.
+
+#### Step 6 — End-to-end smoke test (~2 min)
+
+Open your Vercel URL and walk through:
+
+1. **Register** — create an account with the email you put in `PlatformAdminEmails` → you're Owner of a fresh personal org, and a platform admin.
+2. **Dashboard** loads → click **Load sample project** → predictions run in ~5-10s (first call wakes the AI service from sleep).
+3. Open the project → **AI health brief** generates a trade-aware 2-3 sentence summary.
+4. Click **Ask Simulyn** (bottom-right) → ask *"What's at risk this week?"* → should get a natural-language reply grounded in your org's data.
+5. **Simulation** → click **Suggest scenarios** → run compare → side-by-side table with coloured Impact column.
+
+If any step fails, check logs in this order:
+
+| Symptom | Where to look |
+|---|---|
+| Login fails / 500 on register | Render → `simulyn-api` → **Logs** |
+| White page / JS error on Vercel | Browser DevTools Console |
+| CORS error in browser console | Render → `simulyn-api` → `Frontend__Origin` must match Vercel origin exactly |
+| "Error talking to language model" | Render → `simulyn-ai-ai` → **Logs** |
+| Slow first request after idle | Expected (cold start) — make a second request to warm up |
+| Failed Vercel build | Vercel → **Deployments** → click the red one → full build log |
+
+#### Handy commands
+
+```bash
+# Generate a JWT signing key (Linux/macOS, or Git Bash on Windows)
+openssl rand -base64 48
+
+# On Windows PowerShell if openssl isn't on PATH:
+[Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
+
+# Test the whole stack from curl once live
+curl -sf https://<your-app>.vercel.app                # → HTML landing page
+curl -sf https://simulyn-api.onrender.com/healthz     # → {"status":"ok","service":"simulyn.api"}
+curl -sf https://simulyn-ai-ai.onrender.com/health    # → {"status":"ok","llm_provider":"openai",...}
+```
+
+#### What you lose on free tiers (and when to upgrade)
+
+| Pain point | Upgrade path |
+|---|---|
+| ~30s cold start after 15 min idle | Render **Starter** ($7/mo each service) — always-on, no sleep |
+| Neon auto-suspend on idle | Neon **Launch** ($19/mo) — no auto-suspend, 10 GB storage |
+| One worker, one region | Render **Standard** ($25/mo) — multi-region fail-over |
+| `.vercel.app` subdomain | Bring your own domain (free on Vercel — add a DNS `CNAME`) |
+
+Upgrade each piece independently. You can run paying customers on a $40/month all-in trio once you outgrow the free tier.
+
+### Option B — Single VPS with Docker Compose + Caddy (self-hosted)
 
 One Linux box running everything, one domain (plus an `api.` subdomain), auto-HTTPS via Caddy. Flat ~$5-10/month. Matches the stack you already run locally, so there are no surprises between dev and prod.
 
@@ -705,28 +881,16 @@ git checkout <sha>
 docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
 ```
 
-### Option 2 — Railway (simplest managed, no SSH)
+### Option C — Railway (simplest managed, no SSH)
 
-[Railway](https://railway.app) builds all services from your repo + provisions Postgres in one project. ~$5-20/month.
+[Railway](https://railway.app) builds all services from your repo + provisions Postgres in one project. ~$5-20/month, no cold starts.
 
-1. New Project → Deploy from GitHub repo.
-2. Add four services pointing at the Dockerfiles: `backend/`, `ai-service/`, `frontend/`, plus a Postgres plugin.
-3. Set env vars (mirror `deploy/.env.prod.example`). Railway exposes `${{Postgres.DATABASE_URL}}` — parse it into `Host=/Port=/Database=/Username=/Password=` for the .NET `ConnectionStrings__Default`.
-4. On the frontend service, set the build-time var `NEXT_PUBLIC_API_URL` to the public URL of the api service.
-5. Done — Railway provisions HTTPS automatically on its generated `*.up.railway.app` domains, or attach your own.
-
-### Option 3 — Vercel + Render + Neon (free-tier friendly)
-
-Cheapest workable setup if you can tolerate 15-min cold starts on the free tiers.
-
-| Component | Where |
-|-----------|-------|
-| Postgres | [Neon](https://neon.tech) (free tier, branchable) |
-| .NET API | [Render](https://render.com) Docker service, root `backend/` |
-| AI service | Render Docker service, root `ai-service/` |
-| Web (Next.js) | [Vercel](https://vercel.com), root `frontend/` |
-
-Use the same env-var list as `deploy/.env.prod.example`. For Render, set `ASPNETCORE_URLS=http://+:8080` on the api service. On Vercel, set `NEXT_PUBLIC_API_URL` as a build env var pointing at your Render API URL.
+1. **New Project** → **Deploy from GitHub repo** → select `simulyn-ai`.
+2. Add three services pointing at the Dockerfiles (`backend/`, `ai-service/`, `frontend/`) plus a **Postgres** plugin.
+3. Set env vars (mirror `deploy/.env.prod.example`, or the Option A lists above). Railway exposes `${{Postgres.DATABASE_URL}}` in the `postgresql://` URL form — parse it into `Host=...;Port=...;Database=...;Username=...;Password=...;SSL Mode=Require` for the .NET `ConnectionStrings__Default`.
+4. On the `frontend` service, set the build-time variable `NEXT_PUBLIC_API_URL` to the public URL of the `backend` service (find it under the service's **Settings → Networking**).
+5. On the `backend` service, set `Frontend__Origin` to the public URL of the `frontend` service and `AiService__BaseUrl` to the internal URL of the `ai-service` (use Railway's internal DNS, e.g. `http://ai-service.railway.internal:8000`, for lower latency and no public exposure).
+6. Done — Railway provisions HTTPS automatically on its generated `*.up.railway.app` domains, or attach your own custom domain with a one-click DNS setup.
 
 ### Production hardening checklist (do this before paying customers)
 
@@ -737,7 +901,7 @@ Regardless of which deploy option you pick:
 - [ ] `.env.prod` is gitignored — double-check with `git status` before pushing.
 - [ ] Nightly Postgres backups + a monthly restore drill (actually restore to a scratch DB).
 - [ ] `SIMULYN_DOMAIN` / `Frontend__Origin` is your *exact* production origin (no wildcards, https only).
-- [ ] API is HTTPS-only (Caddy handles this in Option 1; platform handles it in Options 2/3).
+- [ ] API is HTTPS-only (Caddy handles this in Option B; Render / Vercel / Railway handle it automatically in Options A and C).
 - [ ] `PLATFORM_ADMIN_EMAILS` is a small, controlled list.
 - [ ] LLM provider has billing in place (Groq free tier fine for pilot; add billing before 10+ orgs or heavy usage).
 - [ ] Per-org daily budget caps (`BUDGET_DAILY_LLM_USD_HARD`) are set — protects against runaway costs.
