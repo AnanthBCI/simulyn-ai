@@ -12,6 +12,11 @@ trade-aware mitigations**, **AI project health briefs and weekly recaps**,
 Excel schedule import, and a dashboard with alerts.
 
 > **Quick start:** see [Run locally](#run-locally).
+>
+> **Just deploying or migrating an existing deploy?** Start with
+> [`PILOT_READINESS.md`](./PILOT_READINESS.md) — it lists every change made in
+> the May 2026 pilot-readiness sprint and the exact env-var renames required
+> on Render / Vercel / Stripe.
 
 ## Table of contents
 
@@ -63,8 +68,9 @@ and a paid pilot. Walk through it in [End-to-end demo flow](#end-to-end-demo-flo
 ### Pilot-readiness
 
 - **Email infrastructure** — `IEmailSender` with a Resend driver and a Console
-  fallback. Zero config locally (emails print to stdout); drop in a Resend key
-  in prod.
+  fallback. Zero config for demos (emails print to stdout); drop in a Resend
+  key + verified domain when you're pilot-ready (see
+  [Email delivery](#email-delivery-resend)).
 - **Password reset** + **tokenised invite flow** — `/forgot-password` /
   `/reset-password` and `/register?token=...` for inviting users who don't yet
   have an account. BCrypt-hashed tokens; 1h / 7-day TTLs.
@@ -521,13 +527,42 @@ Any OpenAI-compatible provider works — set `LLM_PROVIDER=openai` plus the righ
 
 See `ai-service/.env.example` for copy-paste env blocks.
 
-### Configuring Resend (real email delivery)
+### Email delivery (Resend)
 
-1. Create an account at [resend.com](https://resend.com) (3,000 emails/month free).
-2. Add and verify your sending domain (3 DNS records — TXT/SPF/DKIM). Without verification, Resend only delivers to the account owner.
-3. Create an API key scoped to *Send emails*.
-4. Set `Email__Resend__ApiKey=re_...` and `Email__FromAddress="Your Name <noreply@yourdomain.com>"`.
-5. Redeploy. Leave the key unset and emails just print to stdout.
+The app has three working email modes. Pick the one that matches your stage — code, settings, and templates are the same; only the env vars change.
+
+| Mode | When to use | What happens | Env vars |
+|---|---|---|---|
+| **A. Console** (default) | Local dev, demos where email isn't part of the script | Emails are logged to the API's stdout in full. Reset/invite links are clickable from the terminal. | *None.* Leave `Email__Resend__ApiKey` unset. |
+| **B. Resend test sender** | You want to *see* a real email arrive in your own inbox during a demo | Resend accepts the request but **only delivers to the email that owns the Resend account**. All other recipients are silently dropped. | `Email__Resend__ApiKey=re_...`<br>`Email__FromAddress="Simulyn AI <onboarding@resend.dev>"` |
+| **C. Verified domain** (pilot / production) | Real users need to receive password-reset / invite / weekly-recap emails | Delivered to **any** recipient, fully DKIM-signed for inbox placement. | `Email__Resend__ApiKey=re_...`<br>`Email__FromAddress="Simulyn AI <noreply@yourdomain.com>"`<br>`Email__AppUrl=https://app.yourdomain.com` |
+
+> **Demo today, pilot later.** Mode A is fine to run a full demo — the API logs every reset link to the terminal, and `IEmailSender` keeps the same interface either way. No code change is needed when you upgrade to Mode B or C; just set the env vars and restart.
+
+#### Upgrading to Mode C (verified domain) for pilot
+
+You only need to do this once, and it takes ~15 minutes (plus DNS propagation).
+
+1. **Buy a domain** (Namecheap, Cloudflare Registrar, etc. — ~$10/yr). You don't need to host a website on it; owning the DNS is enough.
+2. **Add the domain in Resend** → [resend.com/domains](https://resend.com/domains) → *Add Domain* → enter your root domain.
+3. **Copy the DNS records Resend shows you** (typically 1× SPF TXT, 2-3× DKIM TXT, optional MX) and paste them into your registrar's DNS panel exactly as shown.
+4. **Click *Verify DNS Records*** in Resend. Wait until every row is green (usually 5-30 min).
+5. **Update env vars** (Render → `simulyn-api` → Environment, or your `.env.prod`):
+   ```
+   Email__Resend__ApiKey   = re_<your_production_key>
+   Email__FromAddress      = Simulyn AI <noreply@yourdomain.com>
+   Email__AppUrl           = https://app.yourdomain.com
+   ```
+6. **Save** → Render auto-redeploys → trigger a forgot-password from a real user → email arrives.
+
+**Recommended hardening** (after the basics are working):
+
+- Send from a **subdomain** (`mail.yourdomain.com` or `send.yourdomain.com`) to isolate email reputation from your root domain.
+- Add a **DMARC** TXT record: `v=DMARC1; p=none; rua=mailto:dmarc@yourdomain.com` — required by Gmail for bulk senders, improves deliverability.
+- Use a **separate Resend API key** for production (not your local-dev key); rotate periodically.
+- Enable Resend's **bounce/complaint webhook** so bad addresses get auto-suppressed.
+
+**Pricing:** Free tier covers 3,000 emails/month + 100/day — plenty for a pilot of 3-5 orgs. Pro is $20/mo for 50,000/month when you're ready to scale.
 
 ### Configuring Stripe (self-serve checkout)
 
@@ -595,9 +630,9 @@ Host=ep-abc-123-pooler.ap-southeast-1.aws.neon.tech;Database=neondb;Username=neo
 | Dockerfile Path | `./backend/Dockerfile` |
 | Docker Context | `./backend` |
 | Instance Type | **Free** |
-| Health Check Path | `/healthz` |
+| Health Check Path | `/healthz/ready` |
 
-Environment variables:
+Environment variables (minimum required to boot):
 
 ```
 ConnectionStrings__Default = <Npgsql string from Step 1>
@@ -609,9 +644,12 @@ AiService__BaseUrl         = https://simulyn-ai-ai.onrender.com
 PlatformAdminEmails        = you@youremail.com
 ASPNETCORE_ENVIRONMENT     = Production
 ASPNETCORE_URLS            = http://0.0.0.0:10000
+RunMigrationsOnStartup     = true
 ```
 
-Verify: `https://simulyn-api.onrender.com/healthz` → `{"status":"ok",...}`. EF migrations run automatically on first boot.
+Add Email / Budget / Stripe / Sentry env vars per the [Configuration reference](#configuration-reference) once those features are live. **If you're migrating an existing Render deploy**, see [`PILOT_READINESS.md`](./PILOT_READINESS.md#render--simulyn-api-service) for the exact key renames you need to apply.
+
+Verify: `https://simulyn-api.onrender.com/healthz/ready` → `200 OK`. EF migrations run automatically on first boot when `RunMigrationsOnStartup=true`.
 
 > **Multiple Vercel preview URLs?** `Frontend__Origin` accepts a comma-separated list. Each value must be an exact origin (no wildcards).
 

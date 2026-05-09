@@ -36,6 +36,45 @@ export function setActiveOrgId(orgId: string | null) {
   }
 }
 
+/** Error thrown by the API client. Carries the HTTP status so UI code can
+ *  render different paths (e.g. redirect on 401, banner on 429). */
+export class ApiError extends Error {
+  status: number;
+  body: string;
+  /** Server-provided trace id (when ProblemDetails returned) — useful for support. */
+  traceId?: string;
+  /** Seconds until budget reset (for 429 budget_exceeded only). */
+  retryAfterSeconds?: number;
+  constructor(message: string, status: number, body: string, opts: { traceId?: string; retryAfterSeconds?: number } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+    this.traceId = opts.traceId;
+    this.retryAfterSeconds = opts.retryAfterSeconds;
+  }
+}
+
+/** Subscribe to global "user must re-authenticate" events. The Nav clears
+ *  state and pushes the user to /login when this fires. */
+export type AuthExpiredHandler = () => void;
+const authExpiredHandlers: AuthExpiredHandler[] = [];
+export function onAuthExpired(h: AuthExpiredHandler) {
+  authExpiredHandlers.push(h);
+  return () => {
+    const i = authExpiredHandlers.indexOf(h);
+    if (i >= 0) authExpiredHandlers.splice(i, 1);
+  };
+}
+function fireAuthExpired() {
+  for (const h of authExpiredHandlers) {
+    try { h(); } catch { /* ignore handler errors */ }
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("simulyn:auth-expired"));
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit & { auth?: boolean } = {}
@@ -50,13 +89,75 @@ async function request<T>(
     const orgId = getActiveOrgId();
     if (orgId) headers["X-Organization-Id"] = orgId;
   }
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch (networkErr) {
+    // DNS / TCP / CORS errors land here. Surface as a 0-status ApiError so UI
+    // code can branch on it the same way as other failures.
+    throw new ApiError(
+      "Could not reach the Simulyn API. Check your network connection and try again.",
+      0,
+      networkErr instanceof Error ? networkErr.message : String(networkErr),
+    );
+  }
+
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+
+    // 401: token expired or missing. Clear local auth state and let the app
+    // redirect to /login so the user isn't stuck retrying with a dead token.
+    // We deliberately scope this to authenticated requests — login itself can
+    // (legitimately) return 401 for "wrong password" without us nuking state.
+    if (res.status === 401 && options.auth !== false) {
+      clearToken();
+      fireAuthExpired();
+    }
+
+    let traceId: string | undefined;
+    let retryAfterSeconds: number | undefined;
+    let friendlyMessage: string | undefined;
+
+    // Try to parse RFC 7807 ProblemDetails (global handler) or our budget JSON.
+    if (text) {
+      try {
+        const j = JSON.parse(text) as Record<string, unknown>;
+        if (typeof j.traceId === "string") traceId = j.traceId;
+        if (typeof j.retryAfterSeconds === "number") retryAfterSeconds = j.retryAfterSeconds;
+        if (typeof j.message === "string") friendlyMessage = j.message;
+        else if (typeof j.title === "string") friendlyMessage = j.title;
+      } catch {
+        // not JSON — fall through to text
+      }
+    }
+
+    if (res.status === 429 && retryAfterSeconds === undefined) {
+      const ra = res.headers.get("Retry-After");
+      const n = ra ? Number(ra) : NaN;
+      if (Number.isFinite(n)) retryAfterSeconds = n;
+    }
+
+    const message = friendlyMessage
+      ?? text
+      ?? defaultStatusMessage(res.status);
+    throw new ApiError(message, res.status, text, { traceId, retryAfterSeconds });
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+function defaultStatusMessage(status: number): string {
+  switch (status) {
+    case 401: return "Your session has expired. Please sign in again.";
+    case 402: return "Subscription required. Upgrade your plan or contact sales.";
+    case 403: return "You don't have permission to do that.";
+    case 404: return "Not found.";
+    case 429: return "Too many requests. Please wait a moment and try again.";
+    case 503: return "Service is temporarily unavailable. Try again in a minute.";
+    default:
+      if (status >= 500) return "The server hit an unexpected error. The team has been notified.";
+      return `Request failed (${status}).`;
+  }
 }
 
 export type InvitePreview = {
@@ -226,14 +327,28 @@ export const api = {
     const headers: Record<string, string> = {};
     if (t) headers["Authorization"] = `Bearer ${t}`;
     if (orgId) headers["X-Organization-Id"] = orgId;
-    const res = await fetch(`${API_BASE}/api/projects/${projectId}/import-schedule`, {
-      method: "POST",
-      headers,
-      body: fd,
-    });
+
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/projects/${projectId}/import-schedule`, {
+        method: "POST",
+        headers,
+        body: fd,
+      });
+    } catch (networkErr) {
+      throw new ApiError(
+        "Could not reach the Simulyn API. Check your network connection and try again.",
+        0,
+        networkErr instanceof Error ? networkErr.message : String(networkErr),
+      );
+    }
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(text || res.statusText);
+      if (res.status === 401) {
+        clearToken();
+        fireAuthExpired();
+      }
+      throw new ApiError(text || defaultStatusMessage(res.status), res.status, text);
     }
     return res.json() as Promise<ImportScheduleResult>;
   },

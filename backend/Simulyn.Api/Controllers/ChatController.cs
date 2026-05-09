@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Simulyn.Api.Data;
 using Simulyn.Api.Models.Dtos;
+using Simulyn.Api.Models.Entities;
 using Simulyn.Api.Services;
 
 namespace Simulyn.Api.Controllers;
@@ -21,7 +22,8 @@ namespace Simulyn.Api.Controllers;
 public class ChatController(
     AppDbContext db,
     ChatOrchestrator orchestrator,
-    OrganizationContext orgContext) : ControllerBase
+    OrganizationContext orgContext,
+    AiEntitlement aiEntitlement) : ControllerBase
 {
     private const int MaxMessageLength = 2000;
 
@@ -39,6 +41,10 @@ public class ChatController(
         if (membership is null)
             return StatusCode(403, "No active organization. Join or create one to use the chat copilot.");
 
+        // Gate: entitlement + daily budget cap. Returns 402 / 429 if not allowed.
+        var guard = await aiEntitlement.GuardAsync(membership.OrganizationId, Response, ct);
+        if (guard != null) return guard;
+
         var userIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         if (!Guid.TryParse(userIdStr, out var userId))
             return Unauthorized();
@@ -54,6 +60,7 @@ public class ChatController(
             userName,
             ct);
 
+        await aiEntitlement.RecordAsync(membership.OrganizationId, UsageEventKinds.Chat, UsageService.ChatCostMills, ct);
         return Ok(response);
     }
 }

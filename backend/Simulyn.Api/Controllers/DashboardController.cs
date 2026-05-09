@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Simulyn.Api.Data;
 using Simulyn.Api.Models.Dtos;
+using Simulyn.Api.Models.Entities;
 using Simulyn.Api.Services;
 
 namespace Simulyn.Api.Controllers;
@@ -14,7 +15,8 @@ namespace Simulyn.Api.Controllers;
 public class DashboardController(
     AppDbContext db,
     AiClientService ai,
-    OrganizationContext orgContext) : ControllerBase
+    OrganizationContext orgContext,
+    AiEntitlement aiEntitlement) : ControllerBase
 {
     /// <summary>
     /// Weekly-recap cache. The LLM call is the expensive part, so we keep the
@@ -275,6 +277,10 @@ public class DashboardController(
             return Ok(entry.Recap);
         }
 
+        // Cache miss / explicit refresh — about to hit the LLM. Gate on entitlement + budget.
+        var guard = await aiEntitlement.GuardAsync(orgId!.Value, Response, ct);
+        if (guard != null) return guard;
+
         var org = await db.Organizations.AsNoTracking()
             .FirstOrDefaultAsync(o => o.Id == orgId, ct);
 
@@ -289,6 +295,10 @@ public class DashboardController(
         AiWeeklyRecapResponse? aiRes = null;
         try { aiRes = await ai.GenerateWeeklyRecapAsync(request, ct); }
         catch { /* fall back to deterministic text */ }
+        if (aiRes != null)
+        {
+            await aiEntitlement.RecordAsync(orgId.Value, UsageEventKinds.WeeklyRecap, UsageService.WeeklyRecapCostMills, ct);
+        }
 
         var recap = aiRes != null
             ? new WeeklyRecapDto(

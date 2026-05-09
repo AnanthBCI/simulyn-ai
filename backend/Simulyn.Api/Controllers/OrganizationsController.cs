@@ -48,21 +48,18 @@ public class OrganizationsController(
             .Select(g => new { OrgId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.OrgId, x => x.Count, ct);
 
-        var dtos = new List<OrganizationDto>();
-        foreach (var m in memberships)
-        {
-            var entitled = await billing.IsEntitledAsync(m.OrganizationId, ct);
-            dtos.Add(new OrganizationDto(
-                m.Organization.Id,
-                m.Organization.Name,
-                m.Organization.Plan,
-                m.Organization.SubscriptionStatus,
-                m.Organization.SubscriptionExpiresAt,
-                entitled,
-                m.Role,
-                memberCounts.TryGetValue(m.OrganizationId, out var mc) ? mc : 0,
-                projectCounts.TryGetValue(m.OrganizationId, out var pc) ? pc : 0));
-        }
+        // Entitlement is purely a function of fields we already loaded — no need
+        // for one DB roundtrip per org. Compute in memory.
+        var dtos = memberships.Select(m => new OrganizationDto(
+            m.Organization.Id,
+            m.Organization.Name,
+            m.Organization.Plan,
+            m.Organization.SubscriptionStatus,
+            m.Organization.SubscriptionExpiresAt,
+            BillingService.IsEntitled(m.Organization.SubscriptionStatus, m.Organization.SubscriptionExpiresAt),
+            m.Role,
+            memberCounts.TryGetValue(m.OrganizationId, out var mc) ? mc : 0,
+            projectCounts.TryGetValue(m.OrganizationId, out var pc) ? pc : 0)).ToList();
         return Ok(dtos);
     }
 
@@ -194,16 +191,20 @@ public class OrganizationsController(
 
         var emailAddr = req.Email.Trim().ToLowerInvariant();
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email == emailAddr, ct);
+        var org = await db.Organizations.FirstOrDefaultAsync(o => o.Id == id, ct);
+        if (org == null) return NotFound();
 
-        // If the invitee doesn't have an account yet, issue a signed invite token
-        // and email them a /register?token=... link. We do NOT create a membership
-        // row yet — that happens on register when they consume the token.
+        // Anti-enumeration: regardless of whether the email already has a Simulyn
+        // account (or is already a member of this org), respond with the same shape
+        // and 202. The actual side-effect — invite email, immediate membership row,
+        // or "already a member" no-op — is invisible to a caller probing for valid
+        // emails. The legitimate Admin can confirm success by GET /members.
+        var inviteExpiresAt = DateTime.UtcNow.Add(EmailTokenService.OrgInviteTtl);
+        var me = await db.Users.FirstOrDefaultAsync(u => u.Id == UserId, ct);
+
         if (user == null)
         {
-            var me = await db.Users.FirstOrDefaultAsync(u => u.Id == UserId, ct);
-            var org = await db.Organizations.FirstOrDefaultAsync(o => o.Id == id, ct);
-            if (org == null) return NotFound();
-
+            // Unknown email → issue a signed invite token + email a /register link.
             var record = new EmailToken
             {
                 Purpose = EmailTokenPurpose.OrgInvite,
@@ -211,39 +212,38 @@ public class OrganizationsController(
                 OrganizationId = id,
                 Role = role,
                 InvitedByUserId = UserId,
-                ExpiresAt = DateTime.UtcNow.Add(EmailTokenService.OrgInviteTtl),
+                ExpiresAt = inviteExpiresAt,
             };
             var plaintext = await tokens.IssueAsync(record, ct);
             await email.SendAsync(
                 EmailTemplates.OrgInviteNewUser(emailAddr, emailOptions.Value.AppUrl, plaintext, org.Name, me?.Name ?? "A teammate", role),
                 ct);
-
-            // 202 Accepted — the invite is queued but no membership row exists yet.
-            return Accepted(new
+        }
+        else
+        {
+            var existing = await db.OrganizationMembers
+                .FirstOrDefaultAsync(m => m.OrganizationId == id && m.UserId == user.Id, ct);
+            if (existing == null)
             {
-                status = "invited",
-                email = emailAddr,
-                role,
-                expiresAt = record.ExpiresAt,
-            });
+                db.OrganizationMembers.Add(new OrganizationMember
+                {
+                    OrganizationId = id,
+                    UserId = user.Id,
+                    Role = role,
+                    CreatedAt = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync(ct);
+            }
+            // else: silently no-op — already a member.
         }
 
-        var existing = await db.OrganizationMembers
-            .FirstOrDefaultAsync(m => m.OrganizationId == id && m.UserId == user.Id, ct);
-        if (existing != null)
-            return Conflict("That user is already a member of this organization.");
-
-        var newMember = new OrganizationMember
+        return Accepted(new
         {
-            OrganizationId = id,
-            UserId = user.Id,
-            Role = role,
-            CreatedAt = DateTime.UtcNow,
-        };
-        db.OrganizationMembers.Add(newMember);
-        await db.SaveChangesAsync(ct);
-
-        return Ok(new OrganizationMemberDto(user.Id, user.Name, user.Email, role, newMember.CreatedAt));
+            status = "invited",
+            email = emailAddr,
+            role,
+            expiresAt = inviteExpiresAt,
+        });
     }
 
     [HttpPut("{id:guid}/members/{userId:guid}")]

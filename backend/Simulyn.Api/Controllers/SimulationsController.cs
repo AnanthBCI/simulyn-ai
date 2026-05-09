@@ -18,8 +18,8 @@ namespace Simulyn.Api.Controllers;
 public class SimulationsController(
     AppDbContext db,
     AiClientService ai,
-    BillingService billing,
-    OrganizationContext orgContext) : ControllerBase
+    OrganizationContext orgContext,
+    AiEntitlement aiEntitlement) : ControllerBase
 {
     private static readonly JsonSerializerOptions _jsonOpts = new(JsonSerializerDefaults.Web);
 
@@ -39,8 +39,8 @@ public class SimulationsController(
         var roleErr = await orgContext.RequireRoleAsync(OrgRoles.Member, ct);
         if (roleErr != null) return roleErr;
 
-        if (!await billing.IsEntitledAsync(orgId!.Value, ct))
-            return StatusCode(402, "Subscription required for this organization. Contact sales for an invoice plan.");
+        var guard = await aiEntitlement.GuardAsync(orgId!.Value, Response, ct);
+        if (guard != null) return guard;
 
         // Accept either the new (scenarioType + config) shape or the legacy shape.
         var parsed = ParseScenarioRequest(body);
@@ -53,6 +53,7 @@ public class SimulationsController(
         var result = await RunOneAsync(project, parsed, ct);
         db.Simulations.Add(result.Entity);
         await db.SaveChangesAsync(ct);
+        await aiEntitlement.RecordAsync(orgId.Value, UsageEventKinds.Simulation, UsageService.SimulationCostMills, ct);
         return Ok(result.Dto);
     }
 
@@ -71,8 +72,8 @@ public class SimulationsController(
         var roleErr = await orgContext.RequireRoleAsync(OrgRoles.Member, ct);
         if (roleErr != null) return roleErr;
 
-        if (!await billing.IsEntitledAsync(orgId!.Value, ct))
-            return StatusCode(402, "Subscription required for this organization. Contact sales for an invoice plan.");
+        var guard = await aiEntitlement.GuardAsync(orgId!.Value, Response, ct);
+        if (guard != null) return guard;
 
         if (req.Scenarios.Count == 0)
             return BadRequest("At least one scenario is required.");
@@ -91,6 +92,7 @@ public class SimulationsController(
         // Persist all results (append-only history).
         foreach (var r in results) db.Simulations.Add(r.Entity);
         await db.SaveChangesAsync(ct);
+        await aiEntitlement.RecordAsync(orgId.Value, UsageEventKinds.Simulation, UsageService.SimulationCostMills * results.Length, ct);
 
         return Ok(new CompareScenariosResponse(
             req.ProjectId,
@@ -108,8 +110,13 @@ public class SimulationsController(
     {
         var (orgId, forbidden) = await orgContext.RequireOrgAsync(ct);
         if (forbidden != null) return forbidden;
+        var roleErr = await orgContext.RequireRoleAsync(OrgRoles.Member, ct);
+        if (roleErr != null) return roleErr;
 
-        var project = await LoadProjectAsync(projectId, orgId!.Value, ct);
+        var guard = await aiEntitlement.GuardAsync(orgId!.Value, Response, ct);
+        if (guard != null) return guard;
+
+        var project = await LoadProjectAsync(projectId, orgId.Value, ct);
         if (project == null) return NotFound();
 
         int high = 0, med = 0, low = 0;
@@ -152,6 +159,11 @@ public class SimulationsController(
         AiAutoSuggestResponse? aiRes = null;
         try { aiRes = await ai.AutoSuggestScenariosAsync(aiReq, ct); }
         catch { /* fall through to deterministic suggestions below */ }
+        if (aiRes != null)
+        {
+            // Auto-suggest is one LLM call (cheaper than running a real scenario).
+            await aiEntitlement.RecordAsync(orgId.Value, UsageEventKinds.Simulation, UsageService.SimulationCostMills, ct);
+        }
 
         var suggestions = aiRes?.Suggestions is { Count: > 0 }
             ? aiRes.Suggestions.Select(s => new SuggestedScenarioDto(

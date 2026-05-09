@@ -22,6 +22,7 @@ function RegisterInner() {
   const searchParams = useSearchParams();
   const inviteToken = searchParams?.get("token") ?? null;
   const prefilledEmail = searchParams?.get("email") ?? null;
+  const requestedPlan = searchParams?.get("plan") ?? null;
   const [name, setName] = useState("");
   const [email, setEmail] = useState(prefilledEmail ?? "");
   const [password, setPassword] = useState("");
@@ -100,7 +101,11 @@ function RegisterInner() {
           : "Account created. Welcome to Simulyn AI!",
         { duration: 5000 },
       );
-      router.push("/dashboard");
+      // If they came in from the marketing pricing CTA on a paid plan, drop
+      // them on the billing page so they can complete checkout. Otherwise the
+      // dashboard is the right home.
+      const paidPlan = requestedPlan && requestedPlan !== "Starter";
+      router.push(paidPlan ? `/admin/billing?plan=${encodeURIComponent(requestedPlan!)}` : "/dashboard");
     } catch (err) {
       const raw = err instanceof Error ? err.message : "Registration failed";
       setFormError(friendlyRegisterError(raw));

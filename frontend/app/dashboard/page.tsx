@@ -28,6 +28,7 @@ import { AiInsights } from "@/components/widgets/AiInsights";
 import { RiskTrend } from "@/components/widgets/RiskTrend";
 import { WeeklyRecap } from "@/components/widgets/WeeklyRecap";
 import { AlertsWidget } from "@/components/widgets/AlertsWidget";
+import { BudgetStatusWidget } from "@/components/widgets/BudgetStatusWidget";
 import { useToast } from "@/components/ui/Toast";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 import {
@@ -365,6 +366,10 @@ export default function DashboardPage() {
       </header>
 
       {error && <ErrorBanner message={error} onRetry={() => void load()} />}
+
+      {/* Budget warning / blocked banner. Self-hides when usage is well under
+          soft cap, so there's no visual noise on a normal day. */}
+      <BudgetStatusWidget />
 
       {/* 2. Weekly recap — only surfaced once there's a project to recap */}
       {projects.length > 0 && <WeeklyRecap />}

@@ -71,8 +71,13 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-var conn = builder.Configuration.GetConnectionString("Default")
-           ?? "Host=localhost;Database=simulyn;Username=postgres;Password=postgres";
+var conn = builder.Configuration.GetConnectionString("Default");
+if (string.IsNullOrWhiteSpace(conn))
+{
+    throw new InvalidOperationException(
+        "ConnectionStrings:Default is not configured. Set it via env var ConnectionStrings__Default " +
+        "(e.g. 'Host=...;Port=5432;Database=...;Username=...;Password=...;SSL Mode=Require').");
+}
 builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(conn));
 
 builder.Services.AddHttpContextAccessor();
@@ -86,6 +91,7 @@ builder.Services.AddScoped<ChatTools>();
 builder.Services.AddScoped<ChatOrchestrator>();
 builder.Services.AddScoped<UsageService>();
 builder.Services.AddScoped<BudgetGuard>();
+builder.Services.AddScoped<AiEntitlement>();
 builder.Services.AddScoped<EmailTokenService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<WeeklyRecapPdfService>();
@@ -120,7 +126,14 @@ builder.Services.AddHttpClient<AiClientService>((sp, client) =>
     client.Timeout = TimeSpan.FromSeconds(120);
 });
 
-var jwtKey = builder.Configuration["Jwt:Key"]!;
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32 || jwtKey.StartsWith("CHANGE_ME"))
+{
+    throw new InvalidOperationException(
+        "Jwt:Key is missing, too short (< 32 chars), or set to the placeholder. " +
+        "Generate a fresh key per environment: 'openssl rand -base64 48' " +
+        "and set it via env var Jwt__Key.");
+}
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
@@ -130,6 +143,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
+            ValidAlgorithms = new[] { Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256 },
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
@@ -229,8 +243,15 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
+// Auto-apply migrations on startup is convenient locally but a footgun in
+// multi-replica prod (race on __EFMigrationsHistory). Default to "yes in
+// Development, no otherwise"; flip the env var RunMigrationsOnStartup=true
+// to opt in for single-replica deployments (Render free tier, Railway, etc.).
+var runMigrations = app.Environment.IsDevelopment()
+    || string.Equals(builder.Configuration["RunMigrationsOnStartup"], "true", StringComparison.OrdinalIgnoreCase);
+if (runMigrations)
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.MigrateAsync();
 }
@@ -244,15 +265,84 @@ if (!string.IsNullOrWhiteSpace(stripeKey))
 }
 
 app.UseSerilogRequestLogging();
-app.UseSwagger();
-app.UseSwaggerUI();
+
+// Global exception handler — returns RFC 7807 ProblemDetails with the request
+// trace id so a customer screenshot is enough to find the Sentry / Serilog event.
+app.UseExceptionHandler(builder => builder.Run(async ctx =>
+{
+    var feature = ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+    var ex = feature?.Error;
+    var traceId = ctx.TraceIdentifier;
+    var logger = ctx.RequestServices.GetRequiredService<ILogger<Program>>();
+    logger.LogError(ex, "Unhandled exception {TraceId} on {Method} {Path}",
+        traceId, ctx.Request.Method, ctx.Request.Path);
+
+    ctx.Response.ContentType = "application/problem+json";
+    ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
+    await ctx.Response.WriteAsJsonAsync(new
+    {
+        type = "https://httpstatuses.com/500",
+        title = "An unexpected error occurred.",
+        status = 500,
+        traceId,
+    });
+}));
+
+// Swagger only in Development. Pre-pilot we don't want to leak the full schema
+// to the open internet — narrows what an attacker has to guess.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
 app.UseCors();
-app.UseRateLimiter();
+// IMPORTANT: Authentication must run BEFORE the rate limiter so per-user
+// policies (chat / predictions / simulation) can read User.NameIdentifier.
+// If reordered, authenticated users fall back to per-IP partitioning and two
+// users behind a NAT / corporate proxy starve each other.
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
+// Liveness — process is up. Cheap, no I/O.
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", service = "simulyn.api" }))
     .AllowAnonymous();
+
+// Readiness — dependencies reachable. Used by orchestrators / uptime monitors
+// to decide whether to send traffic. Fails (503) if DB or AI service is down.
+app.MapGet("/healthz/ready", async (AppDbContext db, AiClientService ai, CancellationToken ct) =>
+{
+    var checks = new Dictionary<string, object>();
+    var allOk = true;
+
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync("SELECT 1", ct);
+        checks["database"] = "ok";
+    }
+    catch (Exception ex)
+    {
+        checks["database"] = $"error: {ex.GetType().Name}";
+        allOk = false;
+    }
+
+    try
+    {
+        var aiOk = await ai.PingAsync(ct);
+        checks["ai_service"] = aiOk ? "ok" : "unreachable";
+        // AI service down isn't fatal — the app falls back to deterministic text.
+        // Don't flip allOk based on it.
+    }
+    catch (Exception ex)
+    {
+        checks["ai_service"] = $"error: {ex.GetType().Name}";
+    }
+
+    return allOk
+        ? Results.Ok(new { status = "ready", checks })
+        : Results.Json(new { status = "not_ready", checks }, statusCode: 503);
+}).AllowAnonymous();
 
 app.MapControllers();
 

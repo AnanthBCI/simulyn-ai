@@ -15,7 +15,7 @@ import {
   MessageSquare,
   X,
 } from "lucide-react";
-import { api, clearToken, getToken, type MeDto } from "@/lib/api";
+import { api, clearToken, getToken, onAuthExpired, type MeDto } from "@/lib/api";
 import { OrgSwitcher } from "@/components/OrgSwitcher";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ConfirmProvider } from "@/components/ui/ConfirmDialog";
@@ -274,6 +274,23 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     setAuthed(false);
     router.push("/");
   }
+
+  // Centralised "session is dead" handler. Any 401 from lib/api flips us back
+  // to the login page from wherever the user was, instead of leaving them on a
+  // page that's now silently failing every fetch.
+  useEffect(() => {
+    const off = onAuthExpired(() => {
+      setAuthed(false);
+      setMe(null);
+      // Avoid bouncing public pages (landing/login/register) into login.
+      const onPublic = pathname === "/" || pathname === "/login" || pathname === "/register";
+      if (!onPublic) {
+        const next = encodeURIComponent(pathname || "/dashboard");
+        router.push(`/login?next=${next}`);
+      }
+    });
+    return off;
+  }, [pathname, router]);
 
   if (isPublic || !authed) {
     return <>{children}</>;

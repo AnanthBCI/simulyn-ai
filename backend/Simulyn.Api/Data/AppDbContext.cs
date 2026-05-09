@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
     public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<ProcessedStripeEvent> ProcessedStripeEvents => Set<ProcessedStripeEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -125,6 +126,13 @@ public class AppDbContext : DbContext
             e.Property(d => d.DedupKey).HasMaxLength(200);
             e.HasIndex(d => new { d.OrganizationId, d.Kind, d.DedupKey });
             e.HasIndex(d => d.SentAt);
+        });
+
+        modelBuilder.Entity<ProcessedStripeEvent>(e =>
+        {
+            e.Property(p => p.EventId).HasMaxLength(80).IsRequired();
+            e.Property(p => p.EventType).HasMaxLength(100).IsRequired();
+            e.HasIndex(p => p.EventId).IsUnique();
         });
     }
 }

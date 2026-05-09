@@ -838,7 +838,14 @@ def _compute_health_score(body: ProjectBriefIn) -> int:
 
     Unpredicted tasks get a mild penalty so "no data" doesn't read as "all good".
     """
-    total = max(body.task_count, 1)
+    # Empty project — no tasks means no signal. Return a neutral, "you haven't
+    # started yet" score instead of letting the math drift to a misleading 100
+    # (every input ratio is 0/1 below). Keeps the dashboard from saying
+    # "all healthy!" before the user has imported a single row.
+    if body.task_count <= 0:
+        return 50
+
+    total = body.task_count
 
     high_ratio = body.high_risk_count / total
     med_ratio = body.medium_risk_count / total

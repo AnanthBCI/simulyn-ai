@@ -9,7 +9,11 @@ namespace Simulyn.Api.Services;
 /// the predictions controller, the import-schedule flow, sample-data seed, etc.
 /// All scope checks are by organization.
 /// </summary>
-public class PredictionService(AppDbContext db, AiClientService ai, NotificationService notifications, ILogger<PredictionService> logger)
+public class PredictionService(
+    AppDbContext db,
+    AiClientService ai,
+    IServiceScopeFactory scopeFactory,
+    ILogger<PredictionService> logger)
 {
     private const int MaxConcurrentAiCalls = 5;
 
@@ -127,23 +131,37 @@ public class PredictionService(AppDbContext db, AiClientService ai, Notification
             if (string.Equals(prior, "High", StringComparison.OrdinalIgnoreCase)) continue; // already high — no alert
             var task = tasks.FirstOrDefault(t => t.Id == p.TaskId);
             if (task == null) continue;
+            // Fire-and-forget on its OWN DI scope. We can't capture the request-scoped
+            // NotificationService here — once the request returns its DbContext is
+            // disposed and NotifyHighRiskAsync would throw ObjectDisposedException
+            // (silently, because the outer try/catch swallows it → no emails ever go
+            // out under load). Resolving from a fresh scope avoids that footgun.
+            var orgIdCopy = project.OrganizationId;
+            var projectIdCopy = project.Id;
+            var projectNameCopy = project.Name;
+            var taskIdCopy = task.Id;
+            var taskNameCopy = task.Name;
+            var delayCopy = p.DelayDays;
+            var summaryCopy = p.Summary ?? string.Empty;
             _ = Task.Run(async () =>
             {
                 try
                 {
+                    await using var scope = scopeFactory.CreateAsyncScope();
+                    var notifications = scope.ServiceProvider.GetRequiredService<NotificationService>();
                     await notifications.NotifyHighRiskAsync(
-                        project.OrganizationId,
-                        project.Id,
-                        project.Name,
-                        task.Id,
-                        task.Name,
-                        p.DelayDays,
-                        p.Summary,
+                        orgIdCopy,
+                        projectIdCopy,
+                        projectNameCopy,
+                        taskIdCopy,
+                        taskNameCopy,
+                        delayCopy,
+                        summaryCopy,
                         CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "High-risk notification failed for task {TaskId}", task.Id);
+                    logger.LogWarning(ex, "High-risk notification failed for task {TaskId}", taskIdCopy);
                 }
             });
         }

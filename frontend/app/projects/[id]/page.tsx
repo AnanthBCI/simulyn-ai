@@ -340,6 +340,18 @@ export default function ProjectDetailPage() {
     void load();
   }, [load]);
 
+  // If the user switches active org from the sidebar mid-session, this page
+  // is now showing data from the wrong tenant — the API will start returning
+  // 404 for the project id under the new org. Bail back to the project list
+  // instead of showing a stale snapshot or a confusing error.
+  useEffect(() => {
+    function onOrgChanged() {
+      router.replace("/projects");
+    }
+    window.addEventListener("simulyn:org-changed", onOrgChanged);
+    return () => window.removeEventListener("simulyn:org-changed", onOrgChanged);
+  }, [router]);
+
   function toggleSort(k: SortKey) {
     if (sortKey === k) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));

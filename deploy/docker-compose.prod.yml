@@ -48,6 +48,12 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - simulyn
 
@@ -64,21 +70,41 @@ services:
       Jwt__ExpiryMinutes: "10080"
       PlatformAdminEmails: ${PLATFORM_ADMIN_EMAILS:?PLATFORM_ADMIN_EMAILS is required, e.g. you@yourdomain.com}
       AiService__BaseUrl: http://ai:8000
+      # Run EF migrations on startup. Safe for single-replica Render/Railway/VPS;
+      # set to "false" if you scale the API beyond one replica and run migrations
+      # out-of-band instead (otherwise replicas race on __EFMigrationsHistory).
+      RunMigrationsOnStartup: "true"
       # Browser origin(s), comma-separated. Used for CORS. Must be https in prod.
       Frontend__Origin: https://${SIMULYN_DOMAIN}
-      # Optional integrations — leave unset if not configured, the app falls back.
-      Resend__ApiKey: ${RESEND_API_KEY:-}
-      Resend__FromAddress: ${RESEND_FROM_ADDRESS:-}
-      Resend__AppUrl: https://${SIMULYN_DOMAIN}
+      # Email (Resend). Leave unset to fall back to the console sender.
+      # IMPORTANT: keys live under the Email__ section — earlier compose used
+      # bare Resend__* keys which the .NET code never reads.
+      Email__Provider: ${EMAIL_PROVIDER:-auto}
+      Email__Resend__ApiKey: ${RESEND_API_KEY:-}
+      Email__FromAddress: ${RESEND_FROM_ADDRESS:-Simulyn AI <noreply@simulyn.ai>}
+      Email__AppUrl: https://${SIMULYN_DOMAIN}
       Sentry__Dsn: ${SENTRY_DSN_BACKEND:-}
-      Budget__DailyLlmUsdSoft: ${BUDGET_DAILY_LLM_USD_SOFT:-1}
-      Budget__DailyLlmUsdHard: ${BUDGET_DAILY_LLM_USD_HARD:-2}
+      # Daily per-org LLM budget. Units are MILLS (1/1000 USD), not dollars —
+      # earlier compose used Budget__DailyLlmUsd* which the code doesn't read.
+      # Defaults: 5000 mills ($5) soft warning, 20000 mills ($20) hard block.
+      Budget__SoftCapMills: ${BUDGET_SOFT_CAP_MILLS:-5000}
+      Budget__HardCapMills: ${BUDGET_HARD_CAP_MILLS:-20000}
       Stripe__ApiKey: ${STRIPE_API_KEY:-}
       Stripe__WebhookSecret: ${STRIPE_WEBHOOK_SECRET:-}
-      Stripe__TeamPriceId: ${STRIPE_TEAM_PRICE_ID:-}
-      Stripe__BusinessPriceId: ${STRIPE_BUSINESS_PRICE_ID:-}
+      # Map plan names → Stripe Price IDs. The frontend pricing card uses
+      # "Pro" (and "Enterprise" is sales-led), so configure Stripe__Prices__Pro
+      # at minimum. Add more entries here when you launch new tiers.
+      Stripe__Prices__Pro: ${STRIPE_PRO_PRICE_ID:-}
+      Stripe__Prices__Team: ${STRIPE_TEAM_PRICE_ID:-}
+      Stripe__Prices__Business: ${STRIPE_BUSINESS_PRICE_ID:-}
       Stripe__SuccessUrl: https://${SIMULYN_DOMAIN}/admin/billing?checkout=success
       Stripe__CancelUrl: https://${SIMULYN_DOMAIN}/admin/billing?checkout=cancel
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
@@ -102,6 +128,12 @@ services:
       LLM_TIMEOUT_SECS: ${LLM_TIMEOUT_SECS:-15}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-350}
       CHAT_MAX_TOKENS: ${CHAT_MAX_TOKENS:-1500}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\", timeout=3)' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - simulyn
 

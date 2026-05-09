@@ -165,6 +165,7 @@ function PriceCard({
   features,
   highlighted,
   cta,
+  href,
 }: {
   name: string;
   price: string;
@@ -173,7 +174,18 @@ function PriceCard({
   features: string[];
   highlighted?: boolean;
   cta: string;
+  /** Where the CTA goes. Defaults to /register?plan={name} so the user lands
+   *  in signup pre-tagged with their chosen plan. mailto: links open the user's
+   *  email client (used for the Enterprise tier). */
+  href?: string;
 }) {
+  const ctaHref = href ?? `/register?plan=${encodeURIComponent(name)}`;
+  const isExternal = ctaHref.startsWith("mailto:") || ctaHref.startsWith("http");
+  const ctaClass = `mt-6 rounded-lg px-4 py-2.5 text-center text-sm font-medium transition ${
+    highlighted
+      ? "bg-site-accent text-white hover:bg-blue-600 hover:shadow-[0_0_24px_rgba(59,130,246,0.5)]"
+      : "border border-site-border text-white hover:border-site-accent/50 hover:bg-white/5"
+  }`;
   return (
     <div
       className={`flex flex-col rounded-2xl border p-6 transition hover:-translate-y-1 ${
@@ -203,16 +215,11 @@ function PriceCard({
           </li>
         ))}
       </ul>
-      <Link
-        href="/register"
-        className={`mt-6 rounded-lg px-4 py-2.5 text-center text-sm font-medium transition ${
-          highlighted
-            ? "bg-site-accent text-white hover:bg-blue-600 hover:shadow-[0_0_24px_rgba(59,130,246,0.5)]"
-            : "border border-site-border text-white hover:border-site-accent/50 hover:bg-white/5"
-        }`}
-      >
-        {cta}
-      </Link>
+      {isExternal ? (
+        <a href={ctaHref} className={ctaClass}>{cta}</a>
+      ) : (
+        <Link href={ctaHref} className={ctaClass}>{cta}</Link>
+      )}
     </div>
   );
 }
@@ -795,6 +802,7 @@ export default function LandingPage() {
               price="Custom"
               tagline="For large teams and custom workflows."
               cta="Book a demo"
+              href="mailto:hello@simulyn.ai?subject=Enterprise%20demo%20request"
               features={[
                 "Multiple projects",
                 "SSO / SAML (roadmap)",
@@ -894,12 +902,12 @@ export default function LandingPage() {
               >
                 Contact
               </a>
-              <a href="#" className="transition hover:text-white">
+              <Link href="/privacy" className="transition hover:text-white">
                 Privacy
-              </a>
-              <a href="#" className="transition hover:text-white">
+              </Link>
+              <Link href="/terms" className="transition hover:text-white">
                 Terms
-              </a>
+              </Link>
             </nav>
           </div>
           <p className="mt-6 text-center text-xs text-site-muted">

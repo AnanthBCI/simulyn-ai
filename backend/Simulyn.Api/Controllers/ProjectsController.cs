@@ -19,7 +19,8 @@ public class ProjectsController(
     SampleProjectService sample,
     BillingService billing,
     AiClientService ai,
-    OrganizationContext orgContext) : ControllerBase
+    OrganizationContext orgContext,
+    AiEntitlement aiEntitlement) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
@@ -144,10 +145,19 @@ public class ProjectsController(
             return Ok(ToBriefDto(cached, isStale: false));
         }
 
+        // We're about to hit the LLM (cache miss or explicit refresh) — gate on
+        // entitlement + daily budget cap.
+        var guard = await aiEntitlement.GuardAsync(orgId!.Value, Response, ct);
+        if (guard != null) return guard;
+
         var aiReq = BuildBriefRequest(project);
         AiProjectBriefResponse? aiRes = null;
         try { aiRes = await ai.GenerateProjectBriefAsync(aiReq, ct); }
         catch { /* Fall through to deterministic fallback; don't fail the request. */ }
+        if (aiRes != null)
+        {
+            await aiEntitlement.RecordAsync(orgId.Value, UsageEventKinds.ProjectBrief, UsageService.ProjectBriefCostMills, ct);
+        }
 
         var (headline, body, score, tags) = ResolveBrief(project, aiReq, aiRes);
 
@@ -254,7 +264,12 @@ public class ProjectsController(
 
     private static int DeterministicHealthScore(AiProjectBriefRequest req)
     {
-        var total = Math.Max(req.TaskCount, 1);
+        // Mirror the AI service's empty-project guard — a brand-new project
+        // with zero tasks shouldn't score 100/100 just because every penalty
+        // ratio is 0/1. Neutral 50 ("nothing to evaluate yet") is the safe call.
+        if (req.TaskCount <= 0) return 50;
+
+        var total = req.TaskCount;
         var highRatio = (double)req.HighRiskCount / total;
         var medRatio = (double)req.MediumRiskCount / total;
         var unpredRatio = (double)req.UnpredictedCount / total;
@@ -304,7 +319,11 @@ public class ProjectsController(
         var roleErr = await orgContext.RequireRoleAsync(OrgRoles.Member, ct);
         if (roleErr != null) return roleErr;
 
-        var p = await sample.CreateAndPredictAsync(orgId!.Value, UserId, SampleProjectService.SampleScenario.Mixed, ct);
+        // Sample-data seed runs ~12 predictions; gate on entitlement + budget.
+        var guard = await aiEntitlement.GuardAsync(orgId!.Value, Response, ct);
+        if (guard != null) return guard;
+
+        var p = await sample.CreateAndPredictAsync(orgId.Value, UserId, SampleProjectService.SampleScenario.Mixed, ct);
         var fresh = await db.Projects.AsNoTracking()
             .Include(x => x.Tasks).ThenInclude(t => t.Predictions)
             .FirstAsync(x => x.Id == p.Id, ct);
@@ -325,7 +344,11 @@ public class ProjectsController(
         var roleErr = await orgContext.RequireRoleAsync(OrgRoles.Member, ct);
         if (roleErr != null) return roleErr;
 
-        var created = await sample.CreateDemoBundleAsync(orgId!.Value, UserId, ct);
+        // Demo bundle runs ~54 predictions back-to-back. Definitely needs the gate.
+        var guard = await aiEntitlement.GuardAsync(orgId!.Value, Response, ct);
+        if (guard != null) return guard;
+
+        var created = await sample.CreateDemoBundleAsync(orgId.Value, UserId, ct);
         var ids = created.Select(p => p.Id).ToList();
 
         var fresh = await db.Projects.AsNoTracking()

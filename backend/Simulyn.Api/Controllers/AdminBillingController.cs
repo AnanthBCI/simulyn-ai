@@ -11,7 +11,7 @@ namespace Simulyn.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/admin")]
-public class AdminBillingController(AppDbContext db, BillingService billing) : ControllerBase
+public class AdminBillingController(AppDbContext db) : ControllerBase
 {
     private bool IsPlatformAdmin() => BillingService.IsPlatformAdminClaim(User.FindFirstValue(ClaimTypes.Role));
 
@@ -30,15 +30,13 @@ public class AdminBillingController(AppDbContext db, BillingService billing) : C
             .Select(g => new { OrgId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.OrgId, x => x.Count, ct);
 
-        var list = new List<AdminOrgDto>();
-        foreach (var o in orgs)
-        {
-            var entitled = await billing.IsEntitledAsync(o.Id, ct);
-            list.Add(new AdminOrgDto(
-                o.Id, o.Name, o.Plan, o.SubscriptionStatus, o.SubscriptionExpiresAt, entitled,
-                memberCounts.TryGetValue(o.Id, out var m) ? m : 0,
-                projectCounts.TryGetValue(o.Id, out var p) ? p : 0));
-        }
+        // Compute entitlement in-memory — no per-org DB roundtrip needed since
+        // we already loaded SubscriptionStatus + SubscriptionExpiresAt.
+        var list = orgs.Select(o => new AdminOrgDto(
+            o.Id, o.Name, o.Plan, o.SubscriptionStatus, o.SubscriptionExpiresAt,
+            BillingService.IsEntitled(o.SubscriptionStatus, o.SubscriptionExpiresAt),
+            memberCounts.TryGetValue(o.Id, out var m) ? m : 0,
+            projectCounts.TryGetValue(o.Id, out var p) ? p : 0)).ToList();
         return Ok(list.OrderBy(x => x.Name));
     }
 

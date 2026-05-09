@@ -2,8 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { api, setActiveOrgId, setToken } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 import { Spinner } from "@/components/ui/primitives";
@@ -15,10 +15,15 @@ function isValidEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
-export default function LoginPage() {
+function LoginInner() {
   usePageTitle("Sign in");
   const router = useRouter();
   const toast = useToast();
+  const searchParams = useSearchParams();
+  // ?next= preserves where the user was when their session expired so we can
+  // bounce them right back after login. Sanitised to internal paths only.
+  const rawNext = searchParams?.get("next") ?? null;
+  const next = rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : null;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -51,7 +56,7 @@ export default function LoginPage() {
         /* ignore — first dashboard load will handle */
       }
       toast.success(`Welcome back, ${res.name.split(" ")[0] || "there"}.`);
-      router.push("/dashboard");
+      router.push(next ?? "/dashboard");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Login failed";
       setFormError(friendlyAuthError(msg));
@@ -165,6 +170,14 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-site-muted">Loading…</div>}>
+      <LoginInner />
+    </Suspense>
   );
 }
 

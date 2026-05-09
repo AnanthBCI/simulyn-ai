@@ -6,6 +6,25 @@ namespace Simulyn.Api.Services;
 
 public class AiClientService(HttpClient http)
 {
+    /// <summary>
+    /// Cheap reachability probe used by /healthz/ready. Returns true if the AI
+    /// service responds 2xx within a short timeout. Never throws.
+    /// </summary>
+    public async Task<bool> PingAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(3));
+            var res = await http.GetAsync("/health", cts.Token);
+            return res.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public async Task<AiPredictResponse?> PredictAsync(AiPredictRequest request, CancellationToken ct = default)
     {
         var res = await http.PostAsJsonAsync("/predict", request, ct);

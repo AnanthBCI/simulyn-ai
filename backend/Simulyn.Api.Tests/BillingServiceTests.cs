@@ -84,4 +84,26 @@ public class BillingServiceTests
 
         (await svc.IsEntitledAsync(orgId, CancellationToken.None)).Should().BeFalse();
     }
+
+    // The static helper is hot-path: OrganizationsController.Mine + AdminBilling
+    // call it once per row rendered. These guard against future drift between
+    // the static and instance implementations.
+    [Theory]
+    [InlineData("Active", null, true)]
+    [InlineData("Active", -1, false)]   // expired Active subscription
+    [InlineData("Active", 30, true)]
+    [InlineData("Trial", null, false)]   // trial requires an expiry
+    [InlineData("Trial", -1, false)]
+    [InlineData("Trial", 1, true)]
+    [InlineData("Suspended", 30, false)]
+    [InlineData("Inactive", 30, false)]
+    [InlineData("", 30, false)]
+    [InlineData("Unknown", 30, false)]
+    public void Static_IsEntitled_matches_instance_implementation(string status, int? expiresInDays, bool expected)
+    {
+        DateTime? expires = expiresInDays.HasValue
+            ? DateTime.UtcNow.AddDays(expiresInDays.Value)
+            : null;
+        BillingService.IsEntitled(status, expires).Should().Be(expected);
+    }
 }
