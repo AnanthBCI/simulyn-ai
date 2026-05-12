@@ -14,7 +14,8 @@ export function WeeklyRecap() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(true);
+  // Bullets start collapsed so the headline stays the scannable “above the fold” signal.
+  const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async (refresh: boolean) => {
     if (refresh) setRefreshing(true);
@@ -94,7 +95,7 @@ export function WeeklyRecap() {
             type="button"
             onClick={() => void load(true)}
             disabled={refreshing}
-            className="inline-flex items-center gap-1.5 rounded-md border border-site-border bg-site-bg/60 px-2.5 py-1.5 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-site-border bg-site-bg/60 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0 sm:py-1.5"
             title="Regenerate the recap from current data"
           >
             <RefreshCw
@@ -108,13 +109,13 @@ export function WeeklyRecap() {
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
             aria-controls="weekly-recap-bullets"
-            className="inline-flex items-center gap-1 rounded-md border border-site-border bg-site-bg/60 px-2 py-1.5 text-xs text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-site-border bg-site-bg/60 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 sm:min-h-0 sm:py-1.5"
           >
             <ChevronDown
               className={`h-3.5 w-3.5 transition ${expanded ? "rotate-180" : ""}`}
               aria-hidden
             />
-            <span className="sr-only">{expanded ? "Collapse" : "Expand"}</span>
+            {expanded ? "Hide detail" : "Show detail"}
           </button>
         </div>
       </div>

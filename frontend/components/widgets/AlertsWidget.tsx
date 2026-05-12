@@ -26,8 +26,8 @@ export function AlertsWidget({
   const shown = alerts.slice(0, limit);
 
   return (
-    <div className="rounded-xl border border-site-border bg-site-card p-5 shadow-card">
-      <div className="flex items-center justify-between">
+    <div className="flex h-full flex-col rounded-xl border border-site-border bg-site-card p-5 shadow-card">
+      <div className="flex items-center justify-between gap-2">
         <h3 className="text-base font-semibold text-white">Top risk alerts</h3>
         {alerts.length > shown.length && (
           <span className="text-xs text-site-muted">
@@ -53,7 +53,7 @@ export function AlertsWidget({
           </div>
         </div>
       ) : (
-        <ul className="mt-3 space-y-2">
+        <ul className="mt-3 flex-1 space-y-2">
           {shown.map((a, i) => (
             <AlertRow
               key={`${a.taskId ?? "noid"}-${i}`}
@@ -65,6 +65,16 @@ export function AlertsWidget({
             />
           ))}
         </ul>
+      )}
+      {alerts.length > 0 && (
+        <div className="mt-4 border-t border-site-border pt-3">
+          <Link
+            href="/projects?filter=atRisk"
+            className="inline-flex min-h-[44px] w-full items-center justify-center rounded-lg border border-site-border bg-site-bg/60 text-sm font-medium text-site-accent transition hover:border-site-accent/40 hover:bg-site-accent/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+          >
+            Review tasks on at-risk projects
+          </Link>
+        </div>
       )}
     </div>
   );
@@ -87,7 +97,7 @@ function AlertRow({
   const hasRecommendation = !!(alert.recommendation && alert.recommendation.trim());
 
   return (
-    <li className="rounded-lg border border-site-border bg-site-bg/50 p-3 transition hover:border-site-accent/40">
+    <li className="rounded-lg border border-site-border bg-site-bg/50 p-3.5 transition hover:border-site-accent/40 sm:p-3">
       <div className="flex items-start gap-2">
         <RiskChip level={alert.riskLevel} />
         <div className="min-w-0 flex-1">
@@ -113,7 +123,7 @@ function AlertRow({
             onClick={() => setWhyOpen((v) => !v)}
             onBlur={() => setWhyOpen(false)}
             aria-expanded={whyOpen}
-            className="relative inline-flex items-center gap-1 rounded-md border border-site-border bg-site-bg/60 px-2 py-0.5 text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+            className="relative inline-flex min-h-[36px] items-center gap-1 rounded-md border border-site-border bg-site-bg/60 px-2.5 py-1.5 text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 sm:min-h-0 sm:py-0.5"
             title={alert.whySignal}
           >
             <HelpCircle className="h-3 w-3" aria-hidden />
@@ -133,7 +143,7 @@ function AlertRow({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="inline-flex items-center gap-1 rounded-md border border-site-border bg-site-bg/60 px-2 py-0.5 text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+            className="inline-flex min-h-[36px] items-center gap-1 rounded-md border border-site-border bg-site-bg/60 px-2.5 py-1.5 text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 sm:min-h-0 sm:py-0.5"
           >
             <ChevronDown
               className={`h-3 w-3 transition ${expanded ? "rotate-180" : ""}`}

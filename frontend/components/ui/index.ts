@@ -16,3 +16,4 @@ export { Breadcrumbs } from "./Breadcrumbs";
 export type { BreadcrumbItem } from "./Breadcrumbs";
 export { DateField } from "./DateField";
 export type { DateFieldProps } from "./DateField";
+export { PageSection } from "./PageSection";

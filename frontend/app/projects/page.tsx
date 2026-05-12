@@ -16,6 +16,7 @@ import {
   EmptyState,
   ErrorBanner,
 } from "@/components/ui/primitives";
+import { PageSection } from "@/components/ui/PageSection";
 import { usePageTitle } from "@/hooks/usePageTitle";
 
 type ProjectFilter = "all" | "atRisk" | "onTrack";
@@ -241,10 +242,10 @@ function ProjectsListPageInner() {
                   }${stats.overdue > 0 ? ` · ${stats.overdue} overdue` : ""}`}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           <Link
             href="/projects/new"
-            className="inline-flex items-center gap-1.5 rounded-md bg-site-accent px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+            className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-site-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
           >
             <Plus className="h-4 w-4" aria-hidden />
             New project
@@ -252,7 +253,7 @@ function ProjectsListPageInner() {
           <a
             href={importTemplateUrl()}
             download
-            className="inline-flex items-center gap-1.5 rounded-md border border-site-border bg-site-card px-3.5 py-2 text-sm text-slate-300 shadow-sm transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+            className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-site-border bg-site-card px-4 py-2.5 text-sm font-medium text-slate-200 shadow-sm transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
             title="Download Excel template with sample tasks"
           >
             <Download className="h-4 w-4" aria-hidden />
@@ -286,51 +287,55 @@ function ProjectsListPageInner() {
           }}
         />
       ) : (
-        <>
-          {/* Search + filter row */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search projects…"
-                className="w-64 rounded-md border border-site-border bg-site-card px-3 py-1.5 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20"
-              />
-              <div
-                role="tablist"
-                aria-label="Filter projects"
-                className="flex rounded-md border border-site-border bg-site-card p-0.5 text-xs shadow-sm"
-              >
-                {(
-                  [
-                    ["all", "All"],
-                    ["atRisk", "At risk"],
-                    ["onTrack", "On track"],
-                  ] as Array<[ProjectFilter, string]>
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    role="tab"
-                    aria-selected={filter === key}
-                    onClick={() => applyFilter(key)}
-                    className={`rounded px-2.5 py-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 ${
-                      filter === key
-                        ? "bg-site-accent text-white"
-                        : "text-site-muted hover:text-white"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <p className="text-xs text-site-muted">
+        <PageSection
+          sectionId="projects-list"
+          eyebrow="Library"
+          title="Your projects"
+          description="Filter to at-risk jobsites, search by name, then open a card for tasks, predictions, and the AI brief."
+          actions={
+            <p className="text-xs text-site-muted sm:text-right">
               {filteredProjects.length === projects.length
-                ? `Showing all ${projects.length}`
-                : `Showing ${filteredProjects.length} of ${projects.length}`}
+                ? `${projects.length} total`
+                : `${filteredProjects.length} of ${projects.length} shown`}
             </p>
+          }
+        >
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by project name…"
+              className="min-h-[44px] w-full rounded-lg border border-site-border bg-site-card px-3 py-2 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20 lg:max-w-md"
+            />
+            <div
+              role="tablist"
+              aria-label="Filter projects"
+              className="flex w-full rounded-lg border border-site-border bg-site-card p-1 text-sm shadow-sm sm:w-auto"
+            >
+              {(
+                [
+                  ["all", "All"],
+                  ["atRisk", "At risk"],
+                  ["onTrack", "On track"],
+                ] as Array<[ProjectFilter, string]>
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === key}
+                  onClick={() => applyFilter(key)}
+                  className={`min-h-[44px] flex-1 rounded-md px-3 py-2 font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 sm:flex-initial sm:px-4 ${
+                    filter === key
+                      ? "bg-site-accent text-white shadow-sm"
+                      : "text-site-muted hover:text-white"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {filteredProjects.length === 0 ? (
@@ -342,9 +347,9 @@ function ProjectsListPageInner() {
                   setSearch("");
                   applyFilter("all");
                 }}
-                className="ml-2 text-site-accent hover:underline focus-visible:outline-none focus-visible:underline"
+                className="ml-2 inline-flex min-h-[44px] items-center rounded-lg px-2 font-medium text-site-accent hover:underline focus-visible:outline-none focus-visible:underline"
               >
-                Clear
+                Clear filters
               </button>
             </div>
           ) : (
@@ -354,7 +359,7 @@ function ProjectsListPageInner() {
               ))}
             </div>
           )}
-        </>
+        </PageSection>
       )}
 
     </div>

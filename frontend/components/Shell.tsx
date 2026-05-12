@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   LayoutDashboard,
   FolderKanban,
@@ -45,7 +45,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/simulation",
-    label: "What-if simulator",
+    label: "What-if",
     icon: Sparkles,
     match: (p) => p === "/simulation",
   },
@@ -154,7 +154,7 @@ export function Sidebar({
                     href={item.href}
                     onClick={onClose}
                     aria-current={active ? "page" : undefined}
-                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/50 ${
+                    className={`flex min-h-[44px] items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/50 ${
                       active
                         ? "bg-site-accent text-white"
                         : "text-site-sidebar-muted hover:bg-site-sidebar-hover hover:text-white"
@@ -202,7 +202,7 @@ export function MobileMenuButton({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="rounded-md border border-site-border bg-site-card p-2 text-slate-300 shadow-sm transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/50 lg:hidden"
+      className="grid min-h-[44px] min-w-[44px] place-items-center rounded-lg border border-site-border bg-site-card text-slate-300 shadow-sm transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/50 lg:hidden"
       aria-label="Open menu"
     >
       <Menu className="h-5 w-5" aria-hidden />
@@ -235,6 +235,9 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [me, setMe] = useState<MeDto | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeedMessage, setChatSeedMessage] = useState<string | undefined>();
+  const clearChatSeed = useCallback(() => setChatSeedMessage(undefined), []);
+  const isDashboard = pathname === "/dashboard";
 
   // Pages that render their own layout (no sidebar).
   const isPublic = pathname === "/" || pathname === "/login" || pathname === "/register";
@@ -245,6 +248,16 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    function onOpenChat(e: Event) {
+      const msg = (e as CustomEvent<{ message?: string }>).detail?.message;
+      if (msg) setChatSeedMessage(msg);
+      setChatOpen(true);
+    }
+    window.addEventListener("simulyn:open-chat", onOpenChat);
+    return () => window.removeEventListener("simulyn:open-chat", onOpenChat);
+  }, []);
 
   useEffect(() => {
     setAuthed(!!getToken());
@@ -306,7 +319,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile-only top bar (the sidebar is off-screen on mobile). */}
-        <div className="flex items-center gap-3 border-b border-site-border bg-site-card px-4 py-3 lg:hidden">
+        <div className="flex min-h-[52px] items-center gap-3 border-b border-site-border bg-site-card px-4 py-3 lg:hidden">
           <MobileMenuButton onOpen={() => setMobileOpen(true)} />
           <Image
             src="/logo-mark.png"
@@ -320,25 +333,39 @@ function ShellInner({ children }: { children: React.ReactNode }) {
             Simulyn <span className="text-site-accent">AI</span>
           </span>
         </div>
-        <main className="flex-1 overflow-x-hidden px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-          <div className="mx-auto w-full max-w-7xl">{children}</div>
+        <main
+          className={`flex-1 overflow-x-hidden px-4 py-6 pb-24 sm:px-6 sm:pb-20 lg:px-8 lg:py-8 lg:pb-8 ${isDashboard ? "bg-[#0B1120]" : ""}`}
+        >
+          <div
+            className={`mx-auto w-full ${isDashboard ? "max-w-[min(100%,1680px)]" : "max-w-7xl"}`}
+          >
+            {children}
+          </div>
         </main>
       </div>
 
       {/* Floating "Ask Simulyn" launcher. Hidden while drawer is open so it doesn't
           stack on top of the close button. */}
-      {!chatOpen && (
+      {!chatOpen && !isDashboard && (
         <button
           type="button"
           onClick={() => setChatOpen(true)}
           aria-label="Ask Simulyn AI"
-          className="fixed bottom-5 right-5 z-30 inline-flex items-center gap-2 rounded-full bg-site-accent px-4 py-3 text-sm font-medium text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-600 hover:shadow-blue-900/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-site-bg"
+          className="fixed bottom-5 right-5 z-30 inline-flex min-h-[48px] items-center gap-2 rounded-full bg-site-accent px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-600 hover:shadow-blue-900/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-site-bg sm:bottom-6 sm:right-6"
         >
           <MessageSquare className="h-4 w-4" aria-hidden />
           <span className="hidden sm:inline">Ask Simulyn</span>
         </button>
       )}
-      <ChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} />
+      <ChatDrawer
+        open={chatOpen}
+        onClose={() => {
+          setChatOpen(false);
+          setChatSeedMessage(undefined);
+        }}
+        seedMessage={chatSeedMessage}
+        onSeedConsumed={clearChatSeed}
+      />
     </div>
   );
 }

@@ -45,13 +45,31 @@ function pickSuggestions(): string[] {
   return SUGGESTIONS_BY_LANG[lang] ?? SUGGESTIONS_BY_LANG.en;
 }
 
-export function ChatDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ChatDrawer({
+  open,
+  onClose,
+  seedMessage,
+  onSeedConsumed,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** When set as the drawer opens, pre-fills the composer (e.g. dashboard shortcuts). */
+  seedMessage?: string | null;
+  onSeedConsumed?: () => void;
+}) {
   const { entries, sending, send, clear } = useChat();
   const confirm = useConfirm();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const suggestions = useMemo(pickSuggestions, []);
+
+  useEffect(() => {
+    if (!open || seedMessage == null || seedMessage === "") return;
+    setInput(seedMessage);
+    onSeedConsumed?.();
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [open, seedMessage, onSeedConsumed]);
 
   // Autoscroll to the bottom when a new entry arrives or while we're waiting.
   useEffect(() => {

@@ -188,8 +188,8 @@ function ActionButton({
   primary?: boolean;
 }) {
   const cls = primary
-    ? "rounded-md bg-site-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:opacity-50"
-    : "rounded-md border border-site-border bg-site-card px-4 py-2 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:opacity-50";
+    ? "inline-flex min-h-[44px] items-center justify-center rounded-lg bg-site-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:opacity-50"
+    : "inline-flex min-h-[44px] items-center justify-center rounded-lg border border-site-border bg-site-card px-5 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:opacity-50";
   if (href && !disabled) {
     return (
       <Link href={href} className={cls}>

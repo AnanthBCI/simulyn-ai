@@ -11,6 +11,9 @@ import {
   Plus,
   Sparkles,
   Wand2,
+  CalendarClock,
+  Search,
+  CircleDollarSign,
 } from "lucide-react";
 import {
   api,
@@ -22,8 +25,8 @@ import {
   type RiskTrendPoint,
   getToken,
 } from "@/lib/api";
+import { openAskSimulyn } from "@/lib/chat-bridge";
 import { RiskDistribution } from "@/components/widgets/RiskDistribution";
-import { ProjectProgress } from "@/components/widgets/ProjectProgress";
 import { AiInsights } from "@/components/widgets/AiInsights";
 import { RiskTrend } from "@/components/widgets/RiskTrend";
 import { WeeklyRecap } from "@/components/widgets/WeeklyRecap";
@@ -37,23 +40,19 @@ import {
   Skeleton,
   Spinner,
 } from "@/components/ui/primitives";
+import { DashboardCriticalBanner } from "@/components/dashboard/DashboardCriticalBanner";
+import { DashboardProjectTable } from "@/components/dashboard/DashboardProjectTable";
+import { DashboardRecommendedActions } from "@/components/dashboard/DashboardRecommendedActions";
+import { DashboardChatShortcuts } from "@/components/dashboard/DashboardChatShortcuts";
 import { usePageTitle } from "@/hooks/usePageTitle";
 
-// ----- helpers -----
+const headerBtnPrimary =
+  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-site-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40";
+const headerBtnGhost =
+  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-site-border bg-[#0f172a]/60 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:border-site-accent/35 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40";
 
-function timeProgress(start: string, end: string): number {
-  const s = new Date(start).getTime();
-  const e = new Date(end).getTime();
-  if (!isFinite(s) || !isFinite(e) || e <= s) return 0;
-  const now = Date.now();
-  if (now <= s) return 0;
-  if (now >= e) return 100;
-  return Math.round(((now - s) / (e - s)) * 100);
-}
-
-function daysRemaining(end: string): number {
-  return Math.round((new Date(end).getTime() - Date.now()) / 86_400_000);
-}
+/** Illustrative $/day for delay exposure (no cost model in API yet). */
+const COST_PER_DELAY_DAY_USD = 1200;
 
 function timeAgo(iso: string): string {
   const t = new Date(iso).getTime();
@@ -73,7 +72,13 @@ function greetingFor(d: Date): string {
   return "Good evening";
 }
 
-// ----- small UI primitives -----
+function formatUsd(n: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
 
 type KpiTone = "default" | "danger" | "warn" | "good";
 
@@ -90,7 +95,6 @@ function Kpi({
   hint?: string;
   tone?: KpiTone;
   Icon: typeof FolderKanban;
-  /** When set the whole card becomes a clickable navigation tile. */
   href?: string;
 }) {
   const iconBg =
@@ -111,16 +115,18 @@ function Kpi({
           : "text-white";
 
   const body = (
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wider text-site-muted">
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-site-muted">
           {label}
         </p>
-        <p className={`mt-2 text-3xl font-bold ${valueClass}`}>{value}</p>
-        {hint && <p className="mt-1 text-xs text-site-muted">{hint}</p>}
+        <p className={`mt-1.5 text-2xl font-bold tabular-nums sm:text-3xl ${valueClass}`}>
+          {value}
+        </p>
+        {hint && <p className="mt-1 text-[11px] leading-snug text-site-muted sm:text-xs">{hint}</p>}
       </div>
-      <div className={`grid h-10 w-10 place-items-center rounded-full ring-4 ${iconBg}`}>
-        <Icon className="h-5 w-5" aria-hidden />
+      <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ring-4 sm:h-10 sm:w-10 ${iconBg}`}>
+        <Icon className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden />
       </div>
     </div>
   );
@@ -129,20 +135,35 @@ function Kpi({
     return (
       <Link
         href={href}
-        className="group block rounded-xl border border-site-border bg-site-card p-5 shadow-card transition hover:border-site-accent/40 hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+        className="group block min-h-[96px] rounded-xl border border-site-border bg-[#0f172a]/70 p-4 shadow-card backdrop-blur-sm transition hover:border-site-accent/40 hover:bg-[#0f172a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 sm:min-h-0 sm:p-5"
       >
         {body}
       </Link>
     );
   }
   return (
-    <div className="rounded-xl border border-site-border bg-site-card p-5 shadow-card transition hover:border-site-accent/30">
+    <div className="min-h-[96px] rounded-xl border border-site-border bg-[#0f172a]/70 p-4 shadow-card backdrop-blur-sm sm:min-h-0 sm:p-5">
       {body}
     </div>
   );
 }
 
-// ----- page -----
+function aggregateDelayDays(insights: InsightItem[], alerts: AlertItem[]): number {
+  const seen = new Set<string>();
+  let sum = 0;
+  for (const i of insights) {
+    if (seen.has(i.taskId)) continue;
+    seen.add(i.taskId);
+    sum += Math.max(0, i.delayDays ?? 0);
+  }
+  for (const a of alerts) {
+    if (!a.taskId || seen.has(a.taskId)) continue;
+    if (a.delayDays == null) continue;
+    seen.add(a.taskId);
+    sum += Math.max(0, a.delayDays);
+  }
+  return sum;
+}
 
 export default function DashboardPage() {
   usePageTitle("Dashboard");
@@ -176,7 +197,7 @@ export default function DashboardPage() {
         api.dashboardSummary(),
         api.projects(),
         api.alerts(),
-        api.insights(5).catch(() => [] as InsightItem[]),
+        api.insights(8).catch(() => [] as InsightItem[]),
         api.riskTrend(30).catch(() => [] as RiskTrendPoint[]),
       ]);
       setMe(m);
@@ -257,12 +278,12 @@ export default function DashboardPage() {
     () => projects.filter((p) => p.status === "Active").length,
     [projects],
   );
-  const atRiskProjects = useMemo(
-    () => projects.filter((p) => p.highRiskTaskCount > 0).length,
+  const completedProjects = useMemo(
+    () => projects.filter((p) => p.status === "Completed").length,
     [projects],
   );
-  const overdueProjects = useMemo(
-    () => projects.filter((p) => daysRemaining(p.endDate) < 0).length,
+  const atRiskProjects = useMemo(
+    () => projects.filter((p) => p.highRiskTaskCount > 0).length,
     [projects],
   );
   const lastAlertAt = useMemo(
@@ -278,25 +299,59 @@ export default function DashboardPage() {
 
   const topAlerts = useMemo(() => alerts.slice(0, 6), [alerts]);
 
+  const criticalAlert = useMemo(() => {
+    const high = alerts.find((a) => a.riskLevel === "High");
+    return high ?? alerts[0] ?? null;
+  }, [alerts]);
+
+  const criticalProjectName = useMemo(() => {
+    if (!criticalAlert?.projectId) return undefined;
+    return (
+      criticalAlert.projectName ?? projectNameById.get(criticalAlert.projectId) ?? undefined
+    );
+  }, [criticalAlert, projectNameById]);
+
+  const expectedDelayDays = useMemo(
+    () => aggregateDelayDays(insights, alerts),
+    [insights, alerts],
+  );
+
+  const illustrativeCost = expectedDelayDays * COST_PER_DELAY_DAY_USD;
+
+  const atRiskPct = useMemo(() => {
+    if (projects.length === 0) return 0;
+    return Math.round((atRiskProjects / projects.length) * 100);
+  }, [projects.length, atRiskProjects]);
+
+  const initials = useMemo(() => {
+    return (me?.name ?? "")
+      .split(" ")
+      .map((s) => s[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+  }, [me?.name]);
+
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <Skeleton className="h-3 w-40" />
-          <Skeleton className="mt-3 h-7 w-64" />
-          <Skeleton className="mt-2 h-3 w-72" />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <CardSkeleton />
-          <CardSkeleton />
-          <CardSkeleton />
-          <CardSkeleton />
-        </div>
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <CardSkeleton className="h-[340px]" />
+      <div className="space-y-8">
+        <div className="flex flex-col gap-4 border-b border-site-border/50 pb-6 lg:flex-row lg:justify-between">
+          <div>
+            <Skeleton className="h-3 w-40" />
+            <Skeleton className="mt-3 h-8 w-72" />
+            <Skeleton className="mt-2 h-3 w-96 max-w-full" />
           </div>
-          <CardSkeleton className="h-[340px]" />
+          <Skeleton className="h-11 w-full max-w-md rounded-lg lg:w-80" />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <CardSkeleton key={i} />
+          ))}
+        </div>
+        <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+          <CardSkeleton className="h-[320px]" />
+          <CardSkeleton className="h-[320px]" />
         </div>
       </div>
     );
@@ -306,106 +361,54 @@ export default function DashboardPage() {
   const firstName = (me?.name ?? "").split(" ")[0] || me?.name || "there";
   const orgName = me?.activeOrganizationName;
 
-  return (
-    <div className="space-y-6">
-      {/* 1. Page header — title + subtitle + quick actions on the right */}
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-site-accent">
-            {orgName ?? "Personal workspace"}
-            {me?.activeOrganizationRole && (
-              <span className="ml-2 font-normal text-site-muted">
-                · {me.activeOrganizationRole}
-              </span>
-            )}
-          </p>
-          <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">
-            {greeting}, {firstName}
-          </h1>
-          <p className="mt-1 text-sm text-site-muted">
-            {projects.length === 0
-              ? "Let's get your first project in. Import an Excel schedule or load a demo bundle to see the AI in action."
-              : `You have ${projects.length} ${
-                  projects.length === 1 ? "project" : "projects"
-                } and ${totalTasks} ${totalTasks === 1 ? "task" : "tasks"}. ${
-                  atRiskProjects > 0
-                    ? `${atRiskProjects} ${atRiskProjects === 1 ? "project needs" : "projects need"} attention.`
-                    : "Everything looks on track."
-                }`}
-          </p>
-        </div>
+  const mainColumn = (
+    <div className="min-w-0 space-y-6">
+      {projects.length > 0 && (
+        <>
+          <WeeklyRecap />
+          <BudgetStatusWidget />
+        </>
+      )}
 
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/projects/new"
-            className="inline-flex items-center gap-1.5 rounded-md bg-site-accent px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
-          >
-            <Plus className="h-4 w-4" aria-hidden />
-            New project
-          </Link>
-          <Link
-            href="/simulation"
-            className="inline-flex items-center gap-1.5 rounded-md border border-site-border bg-site-card px-3.5 py-2 text-sm text-slate-300 shadow-sm transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
-          >
-            <Wand2 className="h-4 w-4" aria-hidden />
-            Simulator
-          </Link>
-          {me?.isPlatformAdmin && (
-            <button
-              type="button"
-              disabled={bundleSeeding || seeding}
-              onClick={() => void loadBundle()}
-              className="inline-flex items-center gap-1.5 rounded-md border border-site-accent/40 bg-site-accent/10 px-3.5 py-2 text-sm font-medium text-site-accent transition hover:bg-site-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
-              title="Seed 4 varied demo projects (platform admin)"
-            >
-              {bundleSeeding ? <Spinner size="sm" /> : <Sparkles className="h-4 w-4" />}
-              {bundleSeeding ? "Building demo… (2-3 min)" : "Demo bundle"}
-            </button>
-          )}
-        </div>
-      </header>
-
-      {error && <ErrorBanner message={error} onRetry={() => void load()} />}
-
-      {/* Budget warning / blocked banner. Self-hides when usage is well under
-          soft cap, so there's no visual noise on a normal day. */}
-      <BudgetStatusWidget />
-
-      {/* 2. Weekly recap — only surfaced once there's a project to recap */}
-      {projects.length > 0 && <WeeklyRecap />}
-
-      {/* 3. KPI strip */}
-      {summary && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {summary && projects.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Kpi
-            label="Projects"
-            value={summary.totalProjects}
+            label="Active projects"
+            value={activeProjects}
             hint={
-              summary.totalProjects === 0
-                ? "Create one to get started"
-                : `${activeProjects} active${overdueProjects > 0 ? ` · ${overdueProjects} overdue` : ""}`
+              completedProjects > 0
+                ? `${completedProjects} completed · ${projects.length} total`
+                : `${projects.length} in portfolio`
             }
             Icon={FolderKanban}
-            href={summary.totalProjects > 0 ? "/projects" : undefined}
+            href="/projects"
           />
           <Kpi
-            label="Tasks"
-            value={totalTasks}
+            label="Projects at risk"
+            value={atRiskProjects}
             hint={
-              totalTasks === 0
-                ? "Add tasks or import from Excel"
-                : `Across ${projects.length} ${projects.length === 1 ? "project" : "projects"}`
+              projects.length === 0
+                ? "—"
+                : `${atRiskPct}% of portfolio${atRiskProjects > 0 ? " — review schedule" : ""}`
             }
-            Icon={ListTodo}
-            href={totalTasks > 0 ? "/projects" : undefined}
+            tone={atRiskProjects > 0 ? "warn" : "good"}
+            Icon={AlertTriangle}
+            href={atRiskProjects > 0 ? "/projects?filter=atRisk" : "/projects"}
           />
           <Kpi
-            label="High-risk tasks"
+            label="Expected delay"
+            value={expectedDelayDays > 0 ? `${expectedDelayDays} d` : "0 d"}
+            hint="From top alerts & insights"
+            tone={expectedDelayDays > 8 ? "danger" : expectedDelayDays > 0 ? "warn" : "good"}
+            Icon={CalendarClock}
+          />
+          <Kpi
+            label="Critical tasks"
             value={summary.highRiskTasks}
             hint={
               summary.highRiskTasks === 0
-                ? "Nothing critical right now"
-                : `In ${atRiskProjects} ${atRiskProjects === 1 ? "project" : "projects"} — view`
+                ? "Nothing blocking"
+                : `Across ${atRiskProjects || "—"} at-risk project${atRiskProjects === 1 ? "" : "s"}`
             }
             tone={
               summary.highRiskTasks === 0
@@ -414,84 +417,190 @@ export default function DashboardPage() {
                   ? "danger"
                   : "warn"
             }
-            Icon={AlertTriangle}
+            Icon={ListTodo}
             href={summary.highRiskTasks > 0 ? "/projects?filter=atRisk" : undefined}
           />
           <Kpi
-            label="Open alerts"
-            value={summary.openAlerts}
-            hint={lastAlertAt ? `Last update ${timeAgo(lastAlertAt)}` : "Quiet"}
-            tone={
-              summary.openAlerts === 0
-                ? "good"
-                : summary.openAlerts > 5
-                  ? "danger"
-                  : "warn"
-            }
-            Icon={Bell}
+            label="Exposure (illustrative)"
+            value={expectedDelayDays > 0 ? formatUsd(illustrativeCost) : formatUsd(0)}
+            hint={`~$${COST_PER_DELAY_DAY_USD.toLocaleString()}/delay-day · not billed data`}
+            tone={illustrativeCost > 20_000 ? "danger" : illustrativeCost > 0 ? "warn" : "good"}
+            Icon={CircleDollarSign}
           />
         </div>
       )}
 
-      {/* 3. Empty state — only when zero projects */}
       {projects.length === 0 && (
-        <section className="rounded-2xl border border-dashed border-site-border bg-site-card p-10 text-center shadow-card">
-          <p className="text-base font-medium text-white">
-            You don&apos;t have any projects yet.
+        <section className="rounded-2xl border border-dashed border-site-border bg-[#0f172a]/50 p-8 text-center shadow-card sm:p-10">
+          <p className="text-base font-semibold text-white">No projects yet</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-site-muted">
+            Start with a sample tour or a blank project — Simulyn will score risk and draft your weekly story.
           </p>
-          <p className="mt-2 text-sm text-site-muted">
-            Pick the fastest path to seeing Simulyn in action:
-          </p>
-          <div className="mt-5 flex flex-wrap justify-center gap-3">
+          <div className="mt-6 flex max-w-lg flex-col gap-3 sm:mx-auto sm:flex-row sm:flex-wrap sm:justify-center">
             <button
               type="button"
               disabled={seeding || bundleSeeding}
               onClick={() => void loadSample()}
-              className="inline-flex items-center gap-2 rounded-md bg-site-accent px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg bg-site-accent px-5 text-sm font-semibold text-white transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {seeding && <Spinner size="sm" />}
-              {seeding ? "Building sample project…" : "Load 1 sample project"}
+              {seeding ? "Building sample…" : "Load sample project"}
             </button>
             {me?.isPlatformAdmin && (
               <button
                 type="button"
                 disabled={bundleSeeding || seeding}
                 onClick={() => void loadBundle()}
-                className="inline-flex items-center gap-2 rounded-md border border-site-accent/40 bg-site-accent/10 px-4 py-2 text-sm font-medium text-site-accent transition hover:bg-site-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-site-accent/40 bg-site-accent/10 px-5 text-sm font-semibold text-site-accent transition hover:bg-site-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {bundleSeeding && <Spinner size="sm" />}
-                {bundleSeeding ? "Building 4 demo projects…" : "Load demo bundle (4 projects)"}
+                {bundleSeeding ? "Building…" : "Demo bundle (4 projects)"}
               </button>
             )}
             <Link
               href="/projects/new"
-              className="rounded-md border border-site-border bg-site-card px-4 py-2 text-sm text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+              className="inline-flex min-h-[48px] items-center justify-center rounded-lg border border-site-border bg-site-bg/60 px-5 text-sm font-medium text-slate-200 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
             >
-              Create blank project
+              New blank project
             </Link>
           </div>
         </section>
       )}
 
-      {/* 4. Hero row: Risk Trend (line chart, 2 cols) + AI Insights (1 col) */}
-      {projects.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <RiskTrend points={trend} loading={trendLoading} />
-          </div>
-          <AiInsights insights={insights} loading={insightsLoading} />
-        </div>
+      {projects.length > 0 && criticalAlert && (
+        <DashboardCriticalBanner alert={criticalAlert} projectName={criticalProjectName} />
       )}
 
-      {/* 5. Three-widget row: Project Progress | Risk Distribution | Top Alerts */}
       {projects.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <ProjectProgress projects={projects} limit={6} />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <RiskTrend points={trend} loading={trendLoading} />
           <RiskDistribution summary={summary} />
-          <AlertsWidget alerts={topAlerts} projectNameById={projectNameById} limit={4} />
         </div>
       )}
 
+      {projects.length > 0 && (
+        <>
+          <DashboardProjectTable projects={projects} limit={8} />
+          <div id="dashboard-alerts">
+            <AlertsWidget alerts={topAlerts} projectNameById={projectNameById} limit={5} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const insightsRail = (
+    <div className="flex min-w-0 flex-col gap-5 xl:max-w-[380px] xl:shrink-0">
+      <AiInsights
+        insights={insights}
+        loading={insightsLoading}
+        title="AI insights"
+        severityBadges
+      />
+      <DashboardRecommendedActions insights={insights} alerts={alerts} />
+      <DashboardChatShortcuts />
+    </div>
+  );
+
+  return (
+    <div className="space-y-6 sm:space-y-8">
+      <header className="border-b border-site-border/60 pb-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              {greeting}, {firstName}{" "}
+              <span className="font-normal text-site-muted" aria-hidden>
+                👋
+              </span>
+            </h1>
+            <p className="text-sm text-site-muted">
+              {orgName ?? "Personal workspace"}
+              {me?.activeOrganizationRole ? ` · ${me.activeOrganizationRole}` : ""}
+            </p>
+            <p className="max-w-2xl pt-2 text-sm leading-relaxed text-slate-300 sm:text-[15px]">
+              {projects.length === 0
+                ? "Your overview will fill in as soon as you add a project — risk trend, alerts, and AI insights stay scoped to this workspace."
+                : atRiskProjects > 0
+                  ? `${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalTasks} task${totalTasks === 1 ? "" : "s"}. ${atRiskProjects} project${atRiskProjects === 1 ? "" : "s"} have high-risk work in flight.`
+                  : `${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalTasks} task${totalTasks === 1 ? "" : "s"}. Portfolio looks calm — keep an eye on the trend chart.`}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:justify-end">
+            <Link href="/projects/new" className={headerBtnPrimary}>
+              <Plus className="h-4 w-4 shrink-0" aria-hidden />
+              New project
+            </Link>
+            <Link href="/simulation" className={headerBtnGhost}>
+              <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
+              What-if
+            </Link>
+            <button
+              type="button"
+              onClick={() => openAskSimulyn()}
+              className={`${headerBtnGhost} justify-start text-left sm:min-w-[220px]`}
+            >
+              <Search className="h-4 w-4 shrink-0 text-site-accent" aria-hidden />
+              <span className="truncate">Ask Simulyn AI…</span>
+            </button>
+            <Link
+              href="/projects?filter=atRisk"
+              className="relative inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-site-border bg-[#0f172a]/60 text-slate-200 transition hover:border-site-accent/35 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
+              aria-label={`Alerts${summary && summary.openAlerts > 0 ? `, ${summary.openAlerts} open` : ""}`}
+            >
+              <Bell className="h-5 w-5" aria-hidden />
+              {summary != null && summary.openAlerts > 0 && (
+                <span className="absolute -right-1 -top-1 grid min-h-[1.125rem] min-w-[1.125rem] place-items-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white ring-2 ring-[#0B1120]">
+                  {summary.openAlerts > 99 ? "99+" : summary.openAlerts}
+                </span>
+              )}
+            </Link>
+            {me && (
+              <div
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-site-border bg-site-accent/15 text-sm font-semibold text-site-accent"
+                title={me.name}
+              >
+                {initials || "U"}
+              </div>
+            )}
+            {me?.isPlatformAdmin && (
+              <button
+                type="button"
+                disabled={bundleSeeding || seeding}
+                onClick={() => void loadBundle()}
+                className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-site-accent/40 bg-site-accent/10 px-4 py-2.5 text-sm font-semibold text-site-accent transition hover:bg-site-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Seed 4 varied demo projects"
+              >
+                {bundleSeeding ? <Spinner size="sm" /> : <Sparkles className="h-4 w-4" />}
+                {bundleSeeding ? "Building…" : "Demo bundle"}
+              </button>
+            )}
+          </div>
+        </div>
+        {lastAlertAt && projects.length > 0 && summary != null && summary.openAlerts > 0 && (
+          <p className="mt-3 text-xs text-site-muted">
+            Latest alert activity {timeAgo(lastAlertAt)} ·{" "}
+            <Link href="#dashboard-alerts" className="text-site-accent hover:underline">
+              Jump to alerts
+            </Link>
+          </p>
+        )}
+      </header>
+
+      {error && <ErrorBanner message={error} onRetry={() => void load()} />}
+
+      {projects.length > 0 ? (
+        <div className="grid gap-6 xl:grid-cols-[1fr_380px] xl:items-start xl:gap-8">
+          {mainColumn}
+          <aside className="hidden xl:block">{insightsRail}</aside>
+        </div>
+      ) : (
+        mainColumn
+      )}
+
+      {projects.length > 0 && (
+        <div className="space-y-5 xl:hidden">{insightsRail}</div>
+      )}
     </div>
   );
 }

@@ -19,11 +19,10 @@ services:
     build:
       context: ./ai-service
       args:
-        # Build-time proxy so pip can reach pypi.org from behind the corporate
-        # proxy. Defaults rewrite localhost:3128 → host.docker.internal:3128
-        # (containers can't reach the host on "localhost").
-        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-http://host.docker.internal:3128}
-        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-http://host.docker.internal:3128}
+        # Optional: set DOCKER_BUILD_HTTP_PROXY / DOCKER_BUILD_HTTPS_PROXY in .env
+        # when pip must use a corporate proxy (use host.docker.internal:3128, not localhost).
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
         NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-host.docker.internal,localhost,127.0.0.1}
     ports:
       - "8000:8000"
@@ -54,8 +53,9 @@ services:
     build:
       context: ./backend
       args:
-        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-http://host.docker.internal:3128}
-        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-http://host.docker.internal:3128}
+        # Set DOCKER_BUILD_HTTP_PROXY in .env only when behind a corporate proxy.
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
         NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-host.docker.internal,localhost,127.0.0.1}
     # Host port 5000 is taken on this machine, expose on 5050 instead. Keep
     # in sync with the web service's NEXT_PUBLIC_API_URL build arg below.
@@ -84,8 +84,9 @@ services:
         # Baked into the client bundle at build time — must match the host
         # port the api service is exposed on.
         NEXT_PUBLIC_API_URL: http://localhost:5050
-        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-http://host.docker.internal:3128}
-        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-http://host.docker.internal:3128}
+        # Set DOCKER_BUILD_HTTP_PROXY in .env only when behind a corporate proxy.
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
         NO_PROXY: ${DOCKER_BUILD_NO_PROXY:-host.docker.internal,localhost,127.0.0.1}
     # Host port 3000 is held by another process on this machine, expose 3001.
     ports:
