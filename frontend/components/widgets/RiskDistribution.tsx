@@ -2,7 +2,9 @@
 
 import { useMemo } from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+import { Info } from "lucide-react";
 import type { DashboardSummary } from "@/lib/api";
+import { RISK_LEVEL_EXPLANATION } from "./RiskTrend";
 
 const COLORS = {
   high: "#ef4444", // red-500
@@ -39,18 +41,31 @@ export function RiskDistribution({ summary }: { summary: DashboardSummary | null
   );
 
   return (
-    <div className="rounded-xl border border-site-border bg-site-card p-5 shadow-card">
+    <div className="flex h-full flex-col rounded-xl border border-site-border bg-site-card p-5 shadow-card">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold text-white">Risk distribution</h3>
+        <div className="flex items-center gap-1.5">
+          <h3 className="text-base font-semibold text-white">
+            Risk distribution
+          </h3>
+          <span
+            title={`Share of tasks at each risk level across all projects in this workspace.\n\n${RISK_LEVEL_EXPLANATION}`}
+            className="inline-flex items-center text-site-muted hover:text-slate-300"
+          >
+            <Info className="h-3.5 w-3.5" aria-hidden />
+            <span className="sr-only">
+              Share of tasks at each risk level. {RISK_LEVEL_EXPLANATION}
+            </span>
+          </span>
+        </div>
         <span className="text-xs text-site-muted">All tasks</span>
       </div>
 
       {total === 0 ? (
-        <div className="grid h-[220px] place-items-center text-sm text-site-muted">
+        <div className="grid flex-1 place-items-center text-sm text-site-muted">
           No tasks yet.
         </div>
       ) : (
-        <div className="relative mt-2 h-[220px]">
+        <div className="relative mt-2 min-h-[220px] flex-1">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie

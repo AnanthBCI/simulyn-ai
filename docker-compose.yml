@@ -28,7 +28,40 @@ services:
     ports:
       - "8000:8000"
     environment:
-      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      # Cost-saving fallback chain. Each provider is skipped automatically if
+      # its API key isn't set, so it's safe to leave any of these blank.
+      # Default order: groq (fastest free) → openrouter (multi-backend) →
+      # huggingface (last free resort) → ollama (local, offline-capable).
+      # Gemini is left out by default until billing/project access is fixed.
+      LLM_PROVIDERS: ${LLM_PROVIDERS:-groq,openrouter,huggingface,ollama}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_ENABLE_OLLAMA: ${LLM_ENABLE_OLLAMA:-1}
+
+      # --- Gemini (currently disabled — needs billing/new GCP project) -----
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-}
+
+      # --- Groq (primary — fastest, generous free tier) --------------------
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GROQ_CHAT_MODEL: ${GROQ_CHAT_MODEL:-llama-3.1-8b-instant}
+
+      # --- OpenRouter (best fallback — aggregates ~100 backends per model) -
+      # Get key: https://openrouter.ai/keys. Free models use ":free" suffix.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      OPENROUTER_CHAT_MODEL: ${OPENROUTER_CHAT_MODEL:-}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-http://localhost:3001}
+      OPENROUTER_X_TITLE: ${OPENROUTER_X_TITLE:-Simulyn AI (dev)}
+
+      # --- Hugging Face Inference Providers (last free resort) ------------
+      # Get token: https://huggingface.co/settings/tokens
+      HUGGINGFACE_API_KEY: ${HUGGINGFACE_API_KEY:-}
+      HUGGINGFACE_MODEL: ${HUGGINGFACE_MODEL:-meta-llama/Llama-3.3-70B-Instruct}
+      HUGGINGFACE_CHAT_MODEL: ${HUGGINGFACE_CHAT_MODEL:-}
+
+      # --- Optional paid providers (kept off by default) -------------------
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}

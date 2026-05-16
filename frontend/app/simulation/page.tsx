@@ -337,6 +337,9 @@ function SimulationPageInner() {
       )}
 
       <section className="rounded-xl border border-site-border bg-site-card p-5 shadow-card">
+        {/* Project selector + actions live on the same baseline. The "X tasks"
+            helper is rendered below the row so it can't push the dropdown
+            taller than the buttons. */}
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex-1 min-w-[260px]">
             <label className="text-xs font-medium uppercase tracking-wider text-site-muted">
@@ -357,16 +360,6 @@ function SimulationPageInner() {
                 </option>
               ))}
             </select>
-            {selectedProject && (
-              <p className="mt-1 text-xs text-site-muted">
-                {selectedProject.taskCount} task{selectedProject.taskCount === 1 ? "" : "s"}
-                {selectedProject.highRiskTaskCount > 0 && (
-                  <span className="ml-2 text-red-400">
-                    · {selectedProject.highRiskTaskCount} already high-risk
-                  </span>
-                )}
-              </p>
-            )}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -400,6 +393,17 @@ function SimulationPageInner() {
             </button>
           </div>
         </div>
+
+        {selectedProject && (
+          <p className="mt-2 text-xs text-site-muted">
+            {selectedProject.taskCount} task{selectedProject.taskCount === 1 ? "" : "s"}
+            {selectedProject.highRiskTaskCount > 0 && (
+              <span className="ml-2 text-red-400">
+                · {selectedProject.highRiskTaskCount} already high-risk
+              </span>
+            )}
+          </p>
+        )}
 
         {me && !me.isEntitled && (
           <p className="mt-3 text-xs text-amber-300">

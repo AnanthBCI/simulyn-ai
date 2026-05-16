@@ -69,7 +69,7 @@ export default function NewProjectPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg">
+    <div className="max-w-lg">
       <Breadcrumbs
         items={[
           { label: "Projects", href: "/projects" },

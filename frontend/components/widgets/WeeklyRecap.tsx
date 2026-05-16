@@ -80,8 +80,8 @@ export function WeeklyRecap() {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-site-muted">
-            <Sparkles className="h-3 w-3 text-site-accent" aria-hidden />
+          <div className="flex items-center gap-1.5 text-xs font-medium text-site-muted">
+            <Sparkles className="h-3.5 w-3.5 text-site-accent" aria-hidden />
             AI weekly recap
           </div>
           <h2 className="mt-1 text-lg font-semibold leading-snug text-white">

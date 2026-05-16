@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  FolderKanban,
-  ListTodo,
   AlertTriangle,
   Bell,
+  FolderKanban,
+  Hand,
+  LayoutDashboard,
+  LineChart,
+  ListTodo,
   Plus,
   Sparkles,
   Wand2,
@@ -113,9 +116,7 @@ function Kpi({
   const body = (
     <div className="flex items-start justify-between gap-3">
       <div>
-        <p className="text-xs font-medium uppercase tracking-wider text-site-muted">
-          {label}
-        </p>
+        <p className="text-xs font-medium text-site-muted">{label}</p>
         <p className={`mt-2 text-3xl font-bold ${valueClass}`}>{value}</p>
         {hint && <p className="mt-1 text-xs text-site-muted">{hint}</p>}
       </div>
@@ -142,6 +143,29 @@ function Kpi({
   );
 }
 
+// Small banner that introduces each dashboard section. Keeps the page scannable
+// — users see the "what" of each block at a glance instead of having to infer
+// it from the widgets themselves.
+function SectionHeader({
+  Icon,
+  title,
+  hint,
+}: {
+  Icon: typeof FolderKanban;
+  title: string;
+  hint?: string;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 text-site-accent" aria-hidden />
+        <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
+      </div>
+      {hint && <p className="text-xs text-site-muted">{hint}</p>}
+    </div>
+  );
+}
+
 // ----- page -----
 
 export default function DashboardPage() {
@@ -154,13 +178,18 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [insights, setInsights] = useState<InsightItem[]>([]);
-  const [trend, setTrend] = useState<RiskTrendPoint[]>([]);
+  // `null` = haven't successfully fetched yet (or fetch errored). `[]` would
+  // be ambiguous because the RiskTrend widget treats an empty-but-defined
+  // array as legitimate "no data" and skips its own initial fetch.
+  const [trend, setTrend] = useState<RiskTrendPoint[] | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(true);
-  const [trendLoading, setTrendLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const [bundleSeeding, setBundleSeeding] = useState(false);
+
+  // Show the top N highest-priority insights on the dashboard.
+  const INSIGHTS_TOP_N = 5;
 
   const load = useCallback(async () => {
     if (!getToken()) {
@@ -169,15 +198,14 @@ export default function DashboardPage() {
     }
     setError(null);
     setInsightsLoading(true);
-    setTrendLoading(true);
     try {
       const [m, s, p, a, i, t] = await Promise.all([
         api.me().catch(() => null),
         api.dashboardSummary(),
         api.projects(),
         api.alerts(),
-        api.insights(5).catch(() => [] as InsightItem[]),
-        api.riskTrend(30).catch(() => [] as RiskTrendPoint[]),
+        api.insights(INSIGHTS_TOP_N).catch(() => [] as InsightItem[]),
+        api.riskTrend(30).catch(() => null),
       ]);
       setMe(m);
       setSummary(s);
@@ -190,7 +218,6 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
       setInsightsLoading(false);
-      setTrendLoading(false);
     }
   }, [router]);
 
@@ -276,7 +303,9 @@ export default function DashboardPage() {
     return map;
   }, [projects]);
 
-  const topAlerts = useMemo(() => alerts.slice(0, 6), [alerts]);
+  // Pass the full alerts array to the widget so its "N of M" header shows the
+  // real total, not a pre-sliced subset. The widget already enforces its own
+  // visible limit via the `limit` prop.
 
   if (loading) {
     return (
@@ -304,34 +333,20 @@ export default function DashboardPage() {
 
   const greeting = greetingFor(new Date());
   const firstName = (me?.name ?? "").split(" ")[0] || me?.name || "there";
-  const orgName = me?.activeOrganizationName;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* 1. Page header — title + subtitle + quick actions on the right */}
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-site-accent">
-            {orgName ?? "Personal workspace"}
-            {me?.activeOrganizationRole && (
-              <span className="ml-2 font-normal text-site-muted">
-                · {me.activeOrganizationRole}
-              </span>
-            )}
-          </p>
-          <h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-white sm:text-3xl">
+            <Hand className="h-6 w-6 text-amber-400 sm:h-7 sm:w-7" aria-hidden />
             {greeting}, {firstName}
           </h1>
           <p className="mt-1 text-sm text-site-muted">
             {projects.length === 0
               ? "Let's get your first project in. Import an Excel schedule or load a demo bundle to see the AI in action."
-              : `You have ${projects.length} ${
-                  projects.length === 1 ? "project" : "projects"
-                } and ${totalTasks} ${totalTasks === 1 ? "task" : "tasks"}. ${
-                  atRiskProjects > 0
-                    ? `${atRiskProjects} ${atRiskProjects === 1 ? "project needs" : "projects need"} attention.`
-                    : "Everything looks on track."
-                }`}
+              : `Here's what's happening with your ${projects.length === 1 ? "project" : "projects"} today.`}
           </p>
         </div>
 
@@ -374,66 +389,73 @@ export default function DashboardPage() {
       {/* 2. Weekly recap — only surfaced once there's a project to recap */}
       {projects.length > 0 && <WeeklyRecap />}
 
-      {/* 3. KPI strip */}
+      {/* 3. Overview — KPI strip with a section header for context */}
       {summary && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Kpi
-            label="Projects"
-            value={summary.totalProjects}
-            hint={
-              summary.totalProjects === 0
-                ? "Create one to get started"
-                : `${activeProjects} active${overdueProjects > 0 ? ` · ${overdueProjects} overdue` : ""}`
-            }
-            Icon={FolderKanban}
-            href={summary.totalProjects > 0 ? "/projects" : undefined}
+        <section aria-labelledby="overview-heading">
+          <SectionHeader
+            Icon={LayoutDashboard}
+            title="Overview"
+            hint="A snapshot of your portfolio right now"
           />
-          <Kpi
-            label="Tasks"
-            value={totalTasks}
-            hint={
-              totalTasks === 0
-                ? "Add tasks or import from Excel"
-                : `Across ${projects.length} ${projects.length === 1 ? "project" : "projects"}`
-            }
-            Icon={ListTodo}
-            href={totalTasks > 0 ? "/projects" : undefined}
-          />
-          <Kpi
-            label="High-risk tasks"
-            value={summary.highRiskTasks}
-            hint={
-              summary.highRiskTasks === 0
-                ? "Nothing critical right now"
-                : `In ${atRiskProjects} ${atRiskProjects === 1 ? "project" : "projects"} — view`
-            }
-            tone={
-              summary.highRiskTasks === 0
-                ? "good"
-                : summary.highRiskTasks > 5
-                  ? "danger"
-                  : "warn"
-            }
-            Icon={AlertTriangle}
-            href={summary.highRiskTasks > 0 ? "/projects?filter=atRisk" : undefined}
-          />
-          <Kpi
-            label="Open alerts"
-            value={summary.openAlerts}
-            hint={lastAlertAt ? `Last update ${timeAgo(lastAlertAt)}` : "Quiet"}
-            tone={
-              summary.openAlerts === 0
-                ? "good"
-                : summary.openAlerts > 5
-                  ? "danger"
-                  : "warn"
-            }
-            Icon={Bell}
-          />
-        </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi
+              label="Projects"
+              value={summary.totalProjects}
+              hint={
+                summary.totalProjects === 0
+                  ? "Create one to get started"
+                  : `${activeProjects} active${overdueProjects > 0 ? ` · ${overdueProjects} overdue` : ""}`
+              }
+              Icon={FolderKanban}
+              href={summary.totalProjects > 0 ? "/projects" : undefined}
+            />
+            <Kpi
+              label="Total tasks"
+              value={totalTasks}
+              hint={
+                totalTasks === 0
+                  ? "Add tasks or import from Excel"
+                  : `Across ${projects.length} ${projects.length === 1 ? "project" : "projects"}`
+              }
+              Icon={ListTodo}
+              href={totalTasks > 0 ? "/projects" : undefined}
+            />
+            <Kpi
+              label="High-risk tasks"
+              value={summary.highRiskTasks}
+              hint={
+                summary.highRiskTasks === 0
+                  ? "Nothing critical right now"
+                  : `In ${atRiskProjects} ${atRiskProjects === 1 ? "project" : "projects"} — view`
+              }
+              tone={
+                summary.highRiskTasks === 0
+                  ? "good"
+                  : summary.highRiskTasks > 5
+                    ? "danger"
+                    : "warn"
+              }
+              Icon={AlertTriangle}
+              href={summary.highRiskTasks > 0 ? "/projects?filter=atRisk" : undefined}
+            />
+            <Kpi
+              label="Open alerts"
+              value={summary.openAlerts}
+              hint={lastAlertAt ? `Last update ${timeAgo(lastAlertAt)}` : "Quiet"}
+              tone={
+                summary.openAlerts === 0
+                  ? "good"
+                  : summary.openAlerts > 5
+                    ? "danger"
+                    : "warn"
+              }
+              Icon={Bell}
+            />
+          </div>
+        </section>
       )}
 
-      {/* 3. Empty state — only when zero projects */}
+      {/* 4. Empty state — only when zero projects */}
       {projects.length === 0 && (
         <section className="rounded-2xl border border-dashed border-site-border bg-site-card p-10 text-center shadow-card">
           <p className="text-base font-medium text-white">
@@ -473,23 +495,48 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {/* 4. Hero row: Risk Trend (line chart, 2 cols) + AI Insights (1 col) */}
+      {/* 5. Trends — all chart widgets on one row so they read as a single
+          "analytics" band. 4/4/4 of a 12-col grid: equal thirds across trend,
+          donut, and project bars. Stacks on smaller screens. */}
       {projects.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <RiskTrend points={trend} loading={trendLoading} />
+        <section aria-labelledby="trends-heading">
+          <SectionHeader
+            Icon={LineChart}
+            title="Trends & analytics"
+            hint="How risk and progress are shifting over time"
+          />
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-12">
+            <div className="lg:col-span-4">
+              <RiskTrend
+                initialPoints={trend ?? undefined}
+                initialDays={30}
+              />
+            </div>
+            <div className="lg:col-span-4">
+              <RiskDistribution summary={summary} />
+            </div>
+            <div className="md:col-span-2 lg:col-span-4">
+              <ProjectProgress projects={projects} limit={6} />
+            </div>
           </div>
-          <AiInsights insights={insights} loading={insightsLoading} />
-        </div>
+        </section>
       )}
 
-      {/* 5. Three-widget row: Project Progress | Risk Distribution | Top Alerts */}
+      {/* 6. Needs attention — narrative widgets (AI insights + alerts) below
+          the charts so the user drills down from "what's happening" into
+          "what to do about it". */}
       {projects.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <ProjectProgress projects={projects} limit={6} />
-          <RiskDistribution summary={summary} />
-          <AlertsWidget alerts={topAlerts} projectNameById={projectNameById} limit={4} />
-        </div>
+        <section aria-labelledby="attention-heading">
+          <SectionHeader
+            Icon={AlertTriangle}
+            title="Needs your attention"
+            hint="The most important items the AI surfaced this week"
+          />
+          <div className="grid gap-4 md:grid-cols-2">
+            <AiInsights insights={insights} loading={insightsLoading} />
+            <AlertsWidget alerts={alerts} projectNameById={projectNameById} limit={5} />
+          </div>
+        </section>
       )}
 
     </div>

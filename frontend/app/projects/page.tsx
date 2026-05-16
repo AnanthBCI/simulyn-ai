@@ -295,7 +295,7 @@ function ProjectsListPageInner() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search projects…"
-                className="w-64 rounded-md border border-site-border bg-site-card px-3 py-1.5 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20"
+                className="w-full rounded-md border border-site-border bg-site-card px-3 py-1.5 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20 sm:w-64"
               />
               <div
                 role="tablist"

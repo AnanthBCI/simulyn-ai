@@ -721,7 +721,14 @@ export default function ProjectDetailPage() {
             title={tasks.length === 0 ? "Add a task first" : "Run AI prediction on every task"}
           >
             {busy ? <Spinner size="sm" /> : <Wand2 className="h-4 w-4" />}
-            {busy ? "Running predictions…" : "Run prediction (all tasks)"}
+            {busy ? (
+              "Running predictions…"
+            ) : (
+              <>
+                Run prediction
+                <span className="hidden sm:inline"> (all tasks)</span>
+              </>
+            )}
           </button>
           {me && !me.isEntitled && (
             <span className="flex items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
@@ -916,7 +923,7 @@ export default function ProjectDetailPage() {
             value={taskSearch}
             onChange={(e) => setTaskSearch(e.target.value)}
             placeholder="Search tasks…"
-            className="w-56 rounded-md border border-site-border bg-site-card px-3 py-1.5 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20"
+            className="w-full rounded-md border border-site-border bg-site-card px-3 py-1.5 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20 sm:w-56"
           />
         </div>
         {tasks.length === 0 ? (

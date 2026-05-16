@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, TrendingUp, Lightbulb } from "lucide-react";
+import { AlertTriangle, Lightbulb, TrendingUp } from "lucide-react";
 import type { InsightItem } from "@/lib/api";
 
+// Round, colour-coded icon badge for each risk level (matches the dashboard's
+// "AI insights" reference design).
 const ICON_BY_RISK = {
   High: {
     icon: AlertTriangle,
@@ -26,9 +28,13 @@ const ICON_BY_RISK = {
 } as const;
 
 /**
- * Surface the top AI insights across the whole org. Each card shows the
- * AI-generated short summary plus a deep-link to the affected project. Backed
- * by GET /api/dashboard/insights.
+ * Surface the top AI insights across the whole org. Each card shows:
+ *   - a round, colour-coded icon for the risk level,
+ *   - the AI-generated short summary (headline),
+ *   - the first 1–2 lines of the recommendation as a muted body,
+ *   - a footer with risk level + a deep-link to the affected project/task.
+ *
+ * Backed by GET /api/dashboard/insights (top N by priority).
  */
 export function AiInsights({
   insights,
@@ -38,8 +44,8 @@ export function AiInsights({
   loading?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-site-border bg-site-card p-5 shadow-card">
-      <div className="flex items-center justify-between">
+    <div className="flex h-full flex-col rounded-xl border border-site-border bg-site-card p-5 shadow-card">
+      <div className="flex items-center justify-between gap-3">
         <h3 className="text-base font-semibold text-white">AI insights</h3>
         <span className="text-xs text-site-muted">Highest-priority first</span>
       </div>
@@ -57,7 +63,7 @@ export function AiInsights({
           ))}
         </div>
       ) : insights.length === 0 ? (
-        <div className="mt-4 grid h-[180px] place-items-center text-sm text-site-muted">
+        <div className="mt-4 grid flex-1 place-items-center text-sm text-site-muted">
           <div className="text-center">
             <p>No AI insights yet.</p>
             <p className="mt-1 text-xs">
@@ -66,10 +72,11 @@ export function AiInsights({
           </div>
         </div>
       ) : (
-        <ul className="mt-4 space-y-3">
+        <ul className="mt-4 flex-1 space-y-3">
           {insights.map((it) => {
             const tone =
-              ICON_BY_RISK[it.riskLevel as keyof typeof ICON_BY_RISK] ?? ICON_BY_RISK.Low;
+              ICON_BY_RISK[it.riskLevel as keyof typeof ICON_BY_RISK] ??
+              ICON_BY_RISK.Low;
             const Icon = tone.icon;
             const headline = (it.summary ?? "AI prediction").trim();
             const body = (it.recommendation ?? "")
@@ -88,9 +95,13 @@ export function AiInsights({
                   <Icon className={`h-4 w-4 ${tone.accent}`} aria-hidden />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="line-clamp-2 text-sm font-medium text-white">{headline}</p>
+                  <p className="line-clamp-2 text-sm font-medium text-white">
+                    {headline}
+                  </p>
                   {body && (
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-400">{body}</p>
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-400">
+                      {body}
+                    </p>
                   )}
                   <div className="mt-1 flex items-center gap-2 text-[11px] text-site-muted">
                     <span className={tone.accent}>{it.riskLevel}</span>

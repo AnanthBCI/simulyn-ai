@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Gauge, TrendingUp } from "lucide-react";
-import { ApiError, api, type BudgetStatus } from "@/lib/api";
+import { api, type BudgetStatus } from "@/lib/api";
 
 /**
  * Dashboard widget that surfaces today's per-org LLM spend against the daily
@@ -26,14 +26,11 @@ export function BudgetStatusWidget() {
         if (cancelled) return;
         setStatus(s);
       })
-      .catch((err) => {
+      .catch(() => {
+        // Any failure (auth, 404, network, unknown) → just hide. The budget
+        // widget is informational — never block the dashboard if it errors.
         if (cancelled) return;
-        // Auth / not-found / network errors → just hide. Dashboard keeps working.
-        if (err instanceof ApiError && (err.status === 401 || err.status === 404 || err.status === 0)) {
-          setHidden(true);
-        } else {
-          setHidden(true);
-        }
+        setHidden(true);
       });
     return () => {
       cancelled = true;

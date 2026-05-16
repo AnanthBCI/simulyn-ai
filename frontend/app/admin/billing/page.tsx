@@ -116,14 +116,14 @@ export default function AdminBillingPage() {
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-site-muted" />
               <input
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search organizations…"
-                className="w-72 rounded-md border border-site-border bg-site-card py-1.5 pl-9 pr-3 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20"
+                className="w-full rounded-md border border-site-border bg-site-card py-1.5 pl-9 pr-3 text-sm text-white placeholder:text-site-muted focus:border-site-accent focus:outline-none focus:ring-2 focus:ring-site-accent/20 sm:w-72"
               />
             </div>
             <p className="text-xs text-site-muted">

@@ -118,14 +118,64 @@ services:
       context: ../ai-service
     restart: unless-stopped
     environment:
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required (Groq/DeepSeek/OpenAI — whichever provider)}
+      # Cost-saving fallback chain. Each provider is tried in order; first one
+      # to answer wins. Providers without an API key are silently skipped at
+      # startup, so it's safe to leave any line below blank. If everything
+      # fails the AI service returns a friendly offline message instead of 500.
+      #
+      # Default order (override with LLM_PROVIDERS):
+      #   groq → openrouter
+      # Append ",huggingface,openai,anthropic" to LLM_PROVIDERS if you also
+      # configure those keys. Gemini is left out by default until your GCP
+      # project has billing / API access enabled (current keys return 403).
+      LLM_PROVIDERS: ${LLM_PROVIDERS:-groq,openrouter}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+
+      # --- Gemini (disabled by default until billing enabled) --------------
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+
+      # --- Primary: Groq (fast, generous free tier) ------------------------
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GROQ_CHAT_MODEL: ${GROQ_CHAT_MODEL:-llama-3.1-8b-instant}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-https://api.groq.com/openai/v1}
+
+      # --- Secondary: OpenRouter (multi-backend aggregator, free models) ---
+      # Sign up: https://openrouter.ai/keys. Pick free models with ":free" suffix.
+      # OpenRouter itself auto-fails-over between backend providers per model,
+      # so this single slot is effectively a fallback-inside-a-fallback.
+      # Default: DeepSeek V4 Flash — most reliable free option in our tests.
+      # The 70B Llama free slot frequently returns 429 (upstream overloaded).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-flash:free}
+      OPENROUTER_CHAT_MODEL: ${OPENROUTER_CHAT_MODEL:-deepseek/deepseek-v4-flash:free}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_HTTP_REFERER: ${OPENROUTER_HTTP_REFERER:-https://${SIMULYN_DOMAIN:-simulyn.ai}}
+      OPENROUTER_X_TITLE: ${OPENROUTER_X_TITLE:-Simulyn AI}
+
+      # --- Tertiary: Hugging Face Inference Providers (last free resort) --
+      # Sign up: https://huggingface.co/settings/tokens (kind: "Read")
+      # Free tier is throttled; chat tool-calling quality varies by model.
+      HUGGINGFACE_API_KEY: ${HUGGINGFACE_API_KEY:-}
+      HUGGINGFACE_MODEL: ${HUGGINGFACE_MODEL:-meta-llama/Llama-3.3-70B-Instruct}
+      HUGGINGFACE_CHAT_MODEL: ${HUGGINGFACE_CHAT_MODEL:-}
+      HUGGINGFACE_BASE_URL: ${HUGGINGFACE_BASE_URL:-https://router.huggingface.co/v1}
+
+      # --- Optional paid providers (leave blank to skip) -------------------
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-latest}
-      LLM_TIMEOUT_SECS: ${LLM_TIMEOUT_SECS:-15}
+
+      # Per-provider call timeout. Bumped from 15s → 30s because hosted
+      # chat-completion endpoints sporadically take 8-20s under load, and
+      # the chat loop calls /chat-step multiple times.
+      LLM_TIMEOUT_SECS: ${LLM_TIMEOUT_SECS:-30}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-350}
       CHAT_MAX_TOKENS: ${CHAT_MAX_TOKENS:-1500}
     healthcheck:

@@ -96,7 +96,7 @@ function AlertRow({
           )}
           <p className="mt-0.5 text-sm text-slate-300">{reason}</p>
         </div>
-        <span className="shrink-0 text-[10px] uppercase tracking-wider text-site-muted">
+        <span className="shrink-0 text-[11px] text-site-muted">
           {timeAgo(alert.createdAt)}
         </span>
       </div>
