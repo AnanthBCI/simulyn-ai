@@ -63,8 +63,8 @@ function RegisterInner() {
     if (!email.trim()) next.email = "Email is required.";
     else if (!isValidEmail(email)) next.email = "Enter a valid email address.";
     if (!password) next.password = "Choose a password.";
-    else if (password.length < 6)
-      next.password = "Password must be at least 6 characters.";
+    else if (password.length < 8)
+      next.password = "Password must be at least 8 characters.";
     return next;
   }
 
@@ -195,7 +195,7 @@ function RegisterInner() {
             hint={
               password
                 ? `Strength: ${passwordHint.label}`
-                : "At least 6 characters."
+                : "At least 8 characters."
             }
             hintTone={passwordHint.tone}
             input={
@@ -211,7 +211,7 @@ function RegisterInner() {
                 }}
                 aria-invalid={!!errors.password}
                 aria-describedby={errors.password ? "reg-pw-err" : "reg-pw-hint"}
-                minLength={6}
+                minLength={8}
                 required
               />
             }
@@ -320,9 +320,9 @@ function passwordStrength(pw: string): {
   label: string;
   tone: "muted" | "warn" | "good";
 } {
-  if (pw.length < 6) return { label: "too short", tone: "warn" };
+  if (pw.length < 8) return { label: "too short", tone: "warn" };
   let score = 0;
-  if (pw.length >= 10) score++;
+  if (pw.length >= 12) score++;
   if (/[A-Z]/.test(pw)) score++;
   if (/[0-9]/.test(pw)) score++;
   if (/[^A-Za-z0-9]/.test(pw)) score++;

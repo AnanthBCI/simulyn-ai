@@ -27,6 +27,10 @@ public class AuthController(
     {
         if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Password))
             return BadRequest("Email and password required.");
+        // Min length is enforced both here and on the reset-password endpoint
+        // so a user who registers can also reset using the same rules.
+        if (req.Password.Length < 8)
+            return BadRequest("Password must be at least 8 characters.");
         if (await db.Users.AnyAsync(u => u.Email.ToLower() == req.Email.ToLower(), ct))
             return Conflict("Email already registered.");
 

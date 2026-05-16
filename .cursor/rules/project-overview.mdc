@@ -1,0 +1,25 @@
+---
+description: Simulyn monorepo layout, dev commands, and cross-cutting constraints
+alwaysApply: true
+---
+
+# Simulyn AI — project context
+
+Monorepo: `backend/` (.NET 8 API), `ai-service/` (FastAPI), `frontend/` (Next.js 14). See `AGENTS.md` and `README.md` for full detail.
+
+## Before finishing a change
+
+- Backend: `dotnet test` in `backend/Simulyn.Api.Tests`
+- AI service: `python -m pytest -q` in `ai-service`
+- Frontend: `npx tsc --noEmit` and `npm run build` in `frontend`
+
+## Non-negotiables
+
+1. **Tenant isolation** — scope all queries by active org (`OrganizationContext`, `X-Organization-Id`). Add/update tenant isolation tests when touching data access.
+2. **Deterministic numbers** — risk scores, delay days, health scores, scenario impacts come from rule math (`ScenarioMath`, ai-service rules). LLMs write narrative only unless explicitly changing the spec.
+3. **No secrets in code** — use env vars (`ConnectionStrings__Default`, `Jwt__Key`, `OPENAI_API_KEY`, etc.). Copy from `.env.example`.
+4. **Minimal diffs** — match existing patterns; don't refactor unrelated code in the same PR.
+
+## Stack versions
+
+- .NET 8, Node 20, Python 3.12, PostgreSQL 16, Next.js 14.2

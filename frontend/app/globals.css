@@ -47,3 +47,64 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 .rdp-root .rdp-chevron {
   fill: currentColor;
 }
+
+/* ----------------------------------------------------------------------------
+ * Landing-page motion utilities.
+ *
+ * All animations below are guarded by `prefers-reduced-motion: no-preference`
+ * so users who opted out at the OS level get a fully static page. Animations
+ * are CSS-only — no JS animation libraries — to keep the bundle lean.
+ * ------------------------------------------------------------------------- */
+
+/* Soft expanding halo behind the hero "health" badge. Reads as a pulse without
+ * being as aggressive as Tailwind's `animate-pulse`. */
+@keyframes simulyn-halo {
+  0%   { transform: scale(0.9); opacity: 0.55; }
+  70%  { transform: scale(1.6); opacity: 0;    }
+  100% { transform: scale(1.6); opacity: 0;    }
+}
+
+/* Gentle fade-in + 8px slide-up. Used by sections via the <Reveal> wrapper. */
+@keyframes simulyn-reveal {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* Hero count-in: small slide + fade so individual hero-card lines stagger in
+ * over ~600ms when the page first paints. */
+@keyframes simulyn-count-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .simulyn-halo {
+    animation: simulyn-halo 2.4s ease-out infinite;
+  }
+  .simulyn-reveal {
+    animation: simulyn-reveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .simulyn-count-in {
+    animation: simulyn-count-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  /* Stagger delays for sequential count-in. Apply alongside .simulyn-count-in. */
+  .simulyn-delay-1 { animation-delay: 120ms; }
+  .simulyn-delay-2 { animation-delay: 240ms; }
+  .simulyn-delay-3 { animation-delay: 360ms; }
+  .simulyn-delay-4 { animation-delay: 480ms; }
+  /* Gentle float for hero alert card — Image 2 style, very subtle. */
+  .simulyn-float {
+    animation: simulyn-float 5.5s ease-in-out infinite;
+  }
+}
+
+@keyframes simulyn-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+

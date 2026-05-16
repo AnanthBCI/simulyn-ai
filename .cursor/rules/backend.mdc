@@ -1,0 +1,28 @@
+---
+description: .NET API conventions for Simulyn
+globs: backend/**/*
+alwaysApply: false
+---
+
+# Backend (.NET 8)
+
+## Patterns
+
+- Controllers in `Simulyn.Api/Controllers/`, services in `Services/`, entities in `Models/Entities/`, DTOs in `Models/Dtos/`.
+- Inject `OrganizationContext` for tenant scope; call `RequireRoleAsync(OrgRoles.Member|Admin|Owner)` before mutations.
+- EF Core migrations in `Migrations/` — add via `dotnet ef migrations add` from `Simulyn.Api`.
+- Config keys use `__` for nesting (e.g. `ConnectionStrings__Default`, `Stripe__ApiKey`).
+
+## AI integration
+
+- Call ai-service through `AiClientService`; respect `BudgetGuard` and rate limits on predictions/simulation/chat.
+- Chat tool loop lives in `ChatOrchestrator.cs` + `ChatTools.cs` — tools are read-only, org-scoped.
+
+## Tests
+
+- Add xUnit tests in `Simulyn.Api.Tests` for billing, tenant isolation, and scenario math changes.
+- Use `TestFactory` for integration-style controller tests.
+
+## Errors
+
+- Return ProblemDetails where the API already does; include trace id when available for support.

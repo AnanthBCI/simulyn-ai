@@ -1,0 +1,29 @@
+---
+description: FastAPI AI service conventions for Simulyn
+globs: ai-service/**/*
+alwaysApply: false
+---
+
+# AI service (Python / FastAPI)
+
+## Patterns
+
+- Entry: `main.py`. Deterministic risk/simulation math must stay predictable and match .NET `ScenarioMath` behaviour.
+- LLM provider chain via `LLM_PROVIDERS` / `LLM_PROVIDER=auto`. Missing API keys skip that provider; final fallback is canned text (tag `· offline fallback`).
+- Endpoints: `/predict`, `/simulate`, `/project-brief`, `/weekly-recap`, `/chat-step` (stateless; .NET orchestrator runs tools).
+
+## Rules
+
+- Never let the LLM override computed `risk_level`, `delay_days`, or scenario impact numbers — narrative fields only.
+- Keep timeouts env-driven (`LLM_TIMEOUT_SECS`, `OLLAMA_TIMEOUT_SECS`).
+- Add pytest coverage in `ai-service/tests/` for new provider logic or math changes.
+
+## Local run
+
+```powershell
+cd ai-service
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```

@@ -1,0 +1,24 @@
+---
+description: Next.js frontend conventions for Simulyn
+globs: frontend/**/*
+alwaysApply: false
+---
+
+# Frontend (Next.js 14)
+
+## Patterns
+
+- App Router under `frontend/app/`. Shared UI in `frontend/components/`, hooks in `frontend/hooks/`.
+- API client: `frontend/lib/api.ts` — use `request()`, `ApiError`, `getToken()` / `getActiveOrgId()`. Sends `Authorization` + `X-Organization-Id` on authed calls.
+- Styling: Tailwind only; match existing spacing and component patterns in `components/ui/`.
+- Env: `NEXT_PUBLIC_API_URL` is baked in at build time.
+
+## UI copy
+
+Follow README product positioning: *risk co-pilot*, not "dashboard". Keep feature names consistent with the landing page (`page.tsx`).
+
+## Common pitfalls
+
+- Don't read `localStorage` during SSR — guard with `typeof window === "undefined"`.
+- Handle `ApiError` status codes: 401 → auth flow, 429 → budget/rate limit messaging.
+- Org switch fires `simulyn:org-changed`; subscribe if a page caches org-scoped data.
