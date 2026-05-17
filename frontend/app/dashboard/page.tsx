@@ -10,9 +10,7 @@ import {
   Bell,
   Plus,
   Sparkles,
-  Wand2,
   CalendarClock,
-  Search,
   CircleDollarSign,
 } from "lucide-react";
 import {
@@ -25,7 +23,6 @@ import {
   type RiskTrendPoint,
   getToken,
 } from "@/lib/api";
-import { openAskSimulyn } from "@/lib/chat-bridge";
 import { RiskDistribution } from "@/components/widgets/RiskDistribution";
 import { AiInsights } from "@/components/widgets/AiInsights";
 import { RiskTrend } from "@/components/widgets/RiskTrend";
@@ -43,27 +40,13 @@ import {
 import { DashboardCriticalBanner } from "@/components/dashboard/DashboardCriticalBanner";
 import { DashboardProjectTable } from "@/components/dashboard/DashboardProjectTable";
 import { DashboardRecommendedActions } from "@/components/dashboard/DashboardRecommendedActions";
-import { DashboardChatShortcuts } from "@/components/dashboard/DashboardChatShortcuts";
 import { usePageTitle } from "@/hooks/usePageTitle";
 
 const headerBtnPrimary =
   "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-site-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40";
-const headerBtnGhost =
-  "inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-site-border bg-[#0f172a]/60 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:border-site-accent/35 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40";
 
 /** Illustrative $/day for delay exposure (no cost model in API yet). */
 const COST_PER_DELAY_DAY_USD = 1200;
-
-function timeAgo(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (!isFinite(t)) return "";
-  const diff = (Date.now() - t) / 1000;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 86_400 * 7) return `${Math.floor(diff / 86_400)}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 function greetingFor(d: Date): string {
   const h = d.getHours();
@@ -114,38 +97,44 @@ function Kpi({
           ? "text-emerald-300"
           : "text-white";
 
-  const body = (
-    <div className="flex items-start justify-between gap-2">
-      <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-site-muted">
-          {label}
-        </p>
-        <p className={`mt-1.5 text-2xl font-bold tabular-nums sm:text-3xl ${valueClass}`}>
-          {value}
-        </p>
-        {hint && <p className="mt-1 text-[11px] leading-snug text-site-muted sm:text-xs">{hint}</p>}
+  const iconShell =
+    "grid h-9 w-9 shrink-0 place-items-center self-start rounded-full ring-4 sm:h-10 sm:w-10";
+
+  const inner = (
+    <>
+      <div className="flex flex-1 items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-site-muted">
+            {label}
+          </p>
+          <p className={`mt-1.5 text-2xl font-bold tabular-nums sm:text-3xl ${valueClass}`}>
+            {value}
+          </p>
+        </div>
+        <div className={`${iconShell} ${iconBg}`}>
+          <Icon className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden />
+        </div>
       </div>
-      <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ring-4 sm:h-10 sm:w-10 ${iconBg}`}>
-        <Icon className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden />
-      </div>
-    </div>
+      <p className="mt-3 min-h-[2.5rem] text-[11px] leading-snug text-site-muted sm:text-xs">
+        {hint ?? "\u00a0"}
+      </p>
+    </>
   );
+
+  const cardClass =
+    "flex h-full flex-col rounded-xl border border-site-border bg-[#0f172a]/70 p-4 shadow-card backdrop-blur-sm transition sm:p-5";
 
   if (href) {
     return (
       <Link
         href={href}
-        className="group block min-h-[96px] rounded-xl border border-site-border bg-[#0f172a]/70 p-4 shadow-card backdrop-blur-sm transition hover:border-site-accent/40 hover:bg-[#0f172a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40 sm:min-h-0 sm:p-5"
+        className={`group ${cardClass} hover:border-site-accent/40 hover:bg-[#0f172a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40`}
       >
-        {body}
+        {inner}
       </Link>
     );
   }
-  return (
-    <div className="min-h-[96px] rounded-xl border border-site-border bg-[#0f172a]/70 p-4 shadow-card backdrop-blur-sm sm:min-h-0 sm:p-5">
-      {body}
-    </div>
-  );
+  return <div className={cardClass}>{inner}</div>;
 }
 
 function aggregateDelayDays(insights: InsightItem[], alerts: AlertItem[]): number {
@@ -270,10 +259,6 @@ export default function DashboardPage() {
     }
   }
 
-  const totalTasks = useMemo(
-    () => projects.reduce((sum, p) => sum + p.taskCount, 0),
-    [projects],
-  );
   const activeProjects = useMemo(
     () => projects.filter((p) => p.status === "Active").length,
     [projects],
@@ -285,10 +270,6 @@ export default function DashboardPage() {
   const atRiskProjects = useMemo(
     () => projects.filter((p) => p.highRiskTaskCount > 0).length,
     [projects],
-  );
-  const lastAlertAt = useMemo(
-    () => (alerts.length > 0 ? alerts[0].createdAt : null),
-    [alerts],
   );
 
   const projectNameById = useMemo(() => {
@@ -303,6 +284,18 @@ export default function DashboardPage() {
     const high = alerts.find((a) => a.riskLevel === "High");
     return high ?? alerts[0] ?? null;
   }, [alerts]);
+
+  /** Same task as the hero banner — hide from the widget so the story is not duplicated below. */
+  const alertsForWidget = useMemo(() => {
+    if (!criticalAlert?.taskId) return topAlerts;
+    return topAlerts.filter(
+      (a) =>
+        !(
+          a.taskId === criticalAlert.taskId &&
+          (a.projectId ?? "") === (criticalAlert.projectId ?? "")
+        ),
+    );
+  }, [topAlerts, criticalAlert]);
 
   const criticalProjectName = useMemo(() => {
     if (!criticalAlert?.projectId) return undefined;
@@ -336,15 +329,18 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="space-y-8">
-        <div className="flex flex-col gap-4 border-b border-site-border/50 pb-6 lg:flex-row lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-site-border/50 pb-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <Skeleton className="h-3 w-40" />
-            <Skeleton className="mt-3 h-8 w-72" />
-            <Skeleton className="mt-2 h-3 w-96 max-w-full" />
+            <Skeleton className="h-8 w-64 max-w-full" />
+            <Skeleton className="mt-2 h-4 w-80 max-w-full" />
           </div>
-          <Skeleton className="h-11 w-full max-w-md rounded-lg lg:w-80" />
+          <div className="flex gap-2">
+            <Skeleton className="h-11 w-32 rounded-lg" />
+            <Skeleton className="h-11 w-11 rounded-lg" />
+            <Skeleton className="h-11 w-11 rounded-full" />
+          </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 xl:items-stretch">
           {Array.from({ length: 5 }).map((_, i) => (
             <CardSkeleton key={i} />
           ))}
@@ -359,10 +355,12 @@ export default function DashboardPage() {
 
   const greeting = greetingFor(new Date());
   const firstName = (me?.name ?? "").split(" ")[0] || me?.name || "there";
-  const orgName = me?.activeOrganizationName;
 
   const mainColumn = (
     <div className="min-w-0 space-y-6">
+      {projects.length > 0 && criticalAlert && (
+        <DashboardCriticalBanner alert={criticalAlert} projectName={criticalProjectName} />
+      )}
       {projects.length > 0 && (
         <>
           <WeeklyRecap />
@@ -371,7 +369,7 @@ export default function DashboardPage() {
       )}
 
       {summary && projects.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 xl:items-stretch">
           <Kpi
             label="Active projects"
             value={activeProjects}
@@ -467,10 +465,6 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {projects.length > 0 && criticalAlert && (
-        <DashboardCriticalBanner alert={criticalAlert} projectName={criticalProjectName} />
-      )}
-
       {projects.length > 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
           <RiskTrend points={trend} loading={trendLoading} />
@@ -482,7 +476,7 @@ export default function DashboardPage() {
         <>
           <DashboardProjectTable projects={projects} limit={8} />
           <div id="dashboard-alerts">
-            <AlertsWidget alerts={topAlerts} projectNameById={projectNameById} limit={5} />
+            <AlertsWidget alerts={alertsForWidget} projectNameById={projectNameById} limit={5} />
           </div>
         </>
       )}
@@ -498,51 +492,30 @@ export default function DashboardPage() {
         severityBadges
       />
       <DashboardRecommendedActions insights={insights} alerts={alerts} />
-      <DashboardChatShortcuts />
     </div>
   );
 
   return (
     <div className="space-y-6 sm:space-y-8">
       <header className="border-b border-site-border/60 pb-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 space-y-1">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
               {greeting}, {firstName}{" "}
               <span className="font-normal text-site-muted" aria-hidden>
                 👋
               </span>
             </h1>
-            <p className="text-sm text-site-muted">
-              {orgName ?? "Personal workspace"}
-              {me?.activeOrganizationRole ? ` · ${me.activeOrganizationRole}` : ""}
-            </p>
-            <p className="max-w-2xl pt-2 text-sm leading-relaxed text-slate-300 sm:text-[15px]">
-              {projects.length === 0
-                ? "Your overview will fill in as soon as you add a project — risk trend, alerts, and AI insights stay scoped to this workspace."
-                : atRiskProjects > 0
-                  ? `${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalTasks} task${totalTasks === 1 ? "" : "s"}. ${atRiskProjects} project${atRiskProjects === 1 ? "" : "s"} have high-risk work in flight.`
-                  : `${projects.length} project${projects.length === 1 ? "" : "s"} · ${totalTasks} task${totalTasks === 1 ? "" : "s"}. Portfolio looks calm — keep an eye on the trend chart.`}
+            <p className="mt-1 text-sm text-site-muted">
+              Here&apos;s what&apos;s happening with your projects today.
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:justify-end">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <Link href="/projects/new" className={headerBtnPrimary}>
               <Plus className="h-4 w-4 shrink-0" aria-hidden />
               New project
             </Link>
-            <Link href="/simulation" className={headerBtnGhost}>
-              <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-              What-if
-            </Link>
-            <button
-              type="button"
-              onClick={() => openAskSimulyn()}
-              className={`${headerBtnGhost} justify-start text-left sm:min-w-[220px]`}
-            >
-              <Search className="h-4 w-4 shrink-0 text-site-accent" aria-hidden />
-              <span className="truncate">Ask Simulyn AI…</span>
-            </button>
             <Link
               href="/projects?filter=atRisk"
               className="relative inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-site-border bg-[#0f172a]/60 text-slate-200 transition hover:border-site-accent/35 hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-site-accent/40"
@@ -577,20 +550,12 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
-        {lastAlertAt && projects.length > 0 && summary != null && summary.openAlerts > 0 && (
-          <p className="mt-3 text-xs text-site-muted">
-            Latest alert activity {timeAgo(lastAlertAt)} ·{" "}
-            <Link href="#dashboard-alerts" className="text-site-accent hover:underline">
-              Jump to alerts
-            </Link>
-          </p>
-        )}
       </header>
 
       {error && <ErrorBanner message={error} onRetry={() => void load()} />}
 
       {projects.length > 0 ? (
-        <div className="grid gap-6 xl:grid-cols-[1fr_380px] xl:items-start xl:gap-8">
+        <div className="grid gap-6 xl:grid-cols-[1fr_380px] xl:items-stretch xl:gap-8">
           {mainColumn}
           <aside className="hidden xl:block">{insightsRail}</aside>
         </div>

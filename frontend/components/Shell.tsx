@@ -334,10 +334,10 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           </span>
         </div>
         <main
-          className={`flex-1 overflow-x-hidden px-4 py-6 pb-24 sm:px-6 sm:pb-20 lg:px-8 lg:py-8 lg:pb-8 ${isDashboard ? "bg-[#0B1120]" : ""}`}
+          className={`flex-1 overflow-x-hidden px-4 py-6 pb-24 sm:px-6 sm:pb-20 lg:px-8 lg:py-8 lg:pb-8 ${pathname === "/dashboard" ? "bg-[#0B1120]" : ""}`}
         >
           <div
-            className={`mx-auto w-full ${isDashboard ? "max-w-[min(100%,1680px)]" : "max-w-7xl"}`}
+            className={`mx-auto w-full ${pathname === "/dashboard" ? "max-w-[min(100%,1680px)]" : "max-w-7xl"}`}
           >
             {children}
           </div>
